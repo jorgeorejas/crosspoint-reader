@@ -7,8 +7,12 @@ This document describes all HTTP and WebSocket endpoints available on the CrossP
   - [HTTP Endpoints](#http-endpoints)
     - [GET `/` - Home Page](#get----home-page)
     - [GET `/files` - File Browser Page](#get-files---file-browser-page)
+    - [GET `/calendar` - Calendar Page](#get-calendar---calendar-page)
     - [GET `/api/status` - Device Status](#get-apistatus---device-status)
     - [GET `/api/files` - List Files](#get-apifiles---list-files)
+    - [GET `/api/calendars` - Get Calendar Config](#get-apicalendars---get-calendar-config)
+    - [POST `/api/calendars` - Update Calendar Config](#post-apicalendars---update-calendar-config)
+    - [POST `/api/calendars/sync` - Sync Calendars](#post-apicalendarssync---sync-calendars)
     - [POST `/upload` - Upload File](#post-upload---upload-file)
     - [POST `/mkdir` - Create Folder](#post-mkdir---create-folder)
     - [POST `/delete` - Delete File or Folder](#post-delete---delete-file-or-folder)
@@ -51,6 +55,19 @@ Serves the file browser HTML interface.
 **Request:**
 ```bash
 curl http://crosspoint.local/files
+```
+
+**Response:** HTML page (200 OK)
+
+---
+
+### GET `/calendar` - Calendar Page
+
+Serves the calendar management HTML interface.
+
+**Request:**
+```bash
+curl http://crosspoint.local/calendar
 ```
 
 **Response:** HTML page (200 OK)
@@ -127,6 +144,81 @@ curl "http://crosspoint.local/api/files?path=/Books"
 **Notes:**
 - Hidden files (starting with `.`) are automatically filtered out
 - System folders (`System Volume Information`, `XTCache`) are hidden
+
+---
+
+### GET `/api/calendars` - Get Calendar Config
+
+Returns calendar config and cache metadata.
+
+**Request:**
+```bash
+curl http://crosspoint.local/api/calendars
+```
+
+**Response (200 OK):**
+```json
+{
+  "version": 1,
+  "timezoneOffsetMinutes": 0,
+  "calendars": [
+    {
+      "id": "c1",
+      "url": "https://example.com/calendar.ics",
+      "tag": "Work",
+      "enabled": true,
+      "lastSyncEpoch": 0
+    }
+  ],
+  "cache": {
+    "generatedAtEpoch": 0,
+    "rangeStartEpoch": 0,
+    "rangeEndEpoch": 0,
+    "eventCount": 0
+  }
+}
+```
+
+---
+
+### POST `/api/calendars` - Update Calendar Config
+
+Replaces calendar config with the provided JSON.
+
+**Request:**
+```bash
+curl -X POST -H "Content-Type: application/json" \\
+  -d '{"timezoneOffsetMinutes":0,"calendars":[{"id":"c1","url":"https://example.com/calendar.ics","tag":"Work","enabled":true,"lastSyncEpoch":0}]}' \\
+  http://crosspoint.local/api/calendars
+```
+
+**Response (200 OK):**
+```
+OK
+```
+
+---
+
+### POST `/api/calendars/sync` - Sync Calendars
+
+Downloads all enabled calendars, parses events, and updates the cache.
+
+**Request:**
+```bash
+curl -X POST http://crosspoint.local/api/calendars/sync
+```
+
+**Response (200 OK):**
+```json
+{
+  "ok": true,
+  "generatedAtEpoch": 0,
+  "eventCount": 0,
+  "calendars": [
+    {"id":"c1","ok":true,"message":"ok","eventCount":0}
+  ]
+}
+```
 
 ---
 

@@ -73,6 +73,10 @@ class CrossPointWebServer {
   void handleStatus() const;
   void handleFileList() const;
   void handleFileListData() const;
+  void handleCalendarPage() const;
+  void handleCalendarGet() const;
+  void handleCalendarPost() const;
+  void handleCalendarSync() const;
   void handleDownload() const;
   void handleUpload() const;
   void handleUploadPost() const;

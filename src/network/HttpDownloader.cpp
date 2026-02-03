@@ -62,8 +62,8 @@ bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent) {
   return true;
 }
 
-HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
-                                                             ProgressCallback progress) {
+static HttpDownloader::DownloadError downloadToFileInternal(const std::string& url, const std::string& destPath,
+                                                            HttpDownloader::ProgressCallback progress, bool useAuth) {
   // Use WiFiClientSecure for HTTPS, regular WiFiClient for HTTP
   std::unique_ptr<WiFiClient> client;
   if (UrlUtils::isHttpsUrl(url)) {
@@ -83,7 +83,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   http.addHeader("User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
 
   // Add Basic HTTP auth if credentials are configured
-  if (strlen(SETTINGS.opdsUsername) > 0 && strlen(SETTINGS.opdsPassword) > 0) {
+  if (useAuth && strlen(SETTINGS.opdsUsername) > 0 && strlen(SETTINGS.opdsPassword) > 0) {
     std::string credentials = std::string(SETTINGS.opdsUsername) + ":" + SETTINGS.opdsPassword;
     String encoded = base64::encode(credentials.c_str());
     http.addHeader("Authorization", "Basic " + encoded);
@@ -169,5 +169,15 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
     return HTTP_ERROR;
   }
 
-  return OK;
+  return HttpDownloader::OK;
+}
+
+HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
+                                                             ProgressCallback progress) {
+  return downloadToFileInternal(url, destPath, progress, true);
+}
+
+HttpDownloader::DownloadError HttpDownloader::downloadToFileNoAuth(const std::string& url, const std::string& destPath,
+                                                                   ProgressCallback progress) {
+  return downloadToFileInternal(url, destPath, progress, false);
 }

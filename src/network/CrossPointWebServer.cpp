@@ -9,8 +9,12 @@
 
 #include <algorithm>
 
+#include "html/CalendarPageHtml.generated.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
+#include "calendar/CalendarStore.h"
+#include "calendar/CalendarSync.h"
+#include "util/TimeUtils.h"
 #include "util/StringUtils.h"
 
 namespace {
@@ -98,9 +102,13 @@ void CrossPointWebServer::begin() {
   Serial.printf("[%lu] [WEB] Setting up routes...\n", millis());
   server->on("/", HTTP_GET, [this] { handleRoot(); });
   server->on("/files", HTTP_GET, [this] { handleFileList(); });
+  server->on("/calendar", HTTP_GET, [this] { handleCalendarPage(); });
 
   server->on("/api/status", HTTP_GET, [this] { handleStatus(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
+  server->on("/api/calendars", HTTP_GET, [this] { handleCalendarGet(); });
+  server->on("/api/calendars", HTTP_POST, [this] { handleCalendarPost(); });
+  server->on("/api/calendars/sync", HTTP_POST, [this] { handleCalendarSync(); });
   server->on("/download", HTTP_GET, [this] { handleDownload(); });
 
   // Upload endpoint with special handling for multipart form data
@@ -344,6 +352,122 @@ bool CrossPointWebServer::isEpubFile(const String& filename) const {
 }
 
 void CrossPointWebServer::handleFileList() const { server->send(200, "text/html", FilesPageHtml); }
+
+void CrossPointWebServer::handleCalendarPage() const { server->send(200, "text/html", CalendarPageHtml); }
+
+void CrossPointWebServer::handleCalendarGet() const {
+  CalendarConfig config;
+  CalendarCache cache;
+  CalendarStore::loadConfig(config);
+  CalendarStore::loadCache(cache);
+
+  JsonDocument doc;
+  doc["version"] = config.version;
+  doc["timezoneOffsetMinutes"] = config.timezoneOffsetMinutes;
+  JsonArray calendars = doc["calendars"].to<JsonArray>();
+  for (const auto& entry : config.calendars) {
+    JsonObject item = calendars.add<JsonObject>();
+    item["id"] = entry.id;
+    item["url"] = entry.url;
+    item["tag"] = entry.tag;
+    item["enabled"] = entry.enabled;
+    item["lastSyncEpoch"] = static_cast<int64_t>(entry.lastSyncEpoch);
+  }
+
+  JsonObject cacheMeta = doc["cache"].to<JsonObject>();
+  cacheMeta["generatedAtEpoch"] = static_cast<int64_t>(cache.generatedAtEpoch);
+  cacheMeta["rangeStartEpoch"] = static_cast<int64_t>(cache.rangeStartEpoch);
+  cacheMeta["rangeEndEpoch"] = static_cast<int64_t>(cache.rangeEndEpoch);
+  cacheMeta["eventCount"] = static_cast<int>(cache.events.size());
+
+  String json;
+  serializeJson(doc, json);
+  server->send(200, "application/json", json);
+}
+
+void CrossPointWebServer::handleCalendarPost() const {
+  if (!server->hasArg("plain")) {
+    server->send(400, "text/plain", "Missing body");
+    return;
+  }
+
+  CalendarConfig config;
+  config.version = 1;
+
+  JsonDocument doc;
+  const auto err = deserializeJson(doc, server->arg("plain"));
+  if (err) {
+    server->send(400, "text/plain", "Invalid JSON");
+    return;
+  }
+
+  config.timezoneOffsetMinutes = doc["timezoneOffsetMinutes"] | 0;
+  const JsonArray calendars = doc["calendars"].as<JsonArray>();
+  if (calendars.isNull()) {
+    server->send(400, "text/plain", "Missing calendars");
+    return;
+  }
+
+  for (const JsonObject item : calendars) {
+    CalendarConfigEntry entry;
+    entry.id = item["id"] | "";
+    entry.url = item["url"] | "";
+    entry.tag = item["tag"] | "";
+    entry.enabled = item["enabled"] | true;
+    entry.lastSyncEpoch = item["lastSyncEpoch"] | 0;
+    if (entry.id.empty()) {
+      entry.id = CalendarStore::nextId(config);
+    }
+    config.calendars.push_back(entry);
+  }
+
+  std::string error;
+  if (!CalendarStore::validateConfig(config, error)) {
+    server->send(400, "text/plain", error.c_str());
+    return;
+  }
+
+  if (!CalendarStore::saveConfig(config)) {
+    server->send(500, "text/plain", "Failed to save config");
+    return;
+  }
+
+  server->send(200, "text/plain", "OK");
+}
+
+void CrossPointWebServer::handleCalendarSync() const {
+  CalendarConfig config;
+  if (!CalendarStore::loadConfig(config)) {
+    server->send(400, "text/plain", "Missing config");
+    return;
+  }
+
+  CalendarSyncResult syncResult = CalendarSync::syncCalendars(config);
+  if (!syncResult.ok) {
+    server->send(500, "text/plain", "Sync failed");
+    return;
+  }
+
+  CalendarStore::saveCache(syncResult.cache);
+  CalendarStore::saveConfig(config);
+
+  JsonDocument doc;
+  doc["ok"] = true;
+  doc["generatedAtEpoch"] = static_cast<int64_t>(syncResult.cache.generatedAtEpoch);
+  doc["eventCount"] = static_cast<int>(syncResult.cache.events.size());
+  JsonArray items = doc["calendars"].to<JsonArray>();
+  for (const auto& itemResult : syncResult.items) {
+    JsonObject item = items.add<JsonObject>();
+    item["id"] = itemResult.id;
+    item["ok"] = itemResult.ok;
+    item["message"] = itemResult.message;
+    item["eventCount"] = static_cast<int>(itemResult.eventCount);
+  }
+
+  String json;
+  serializeJson(doc, json);
+  server->send(200, "application/json", json);
+}
 
 void CrossPointWebServer::handleFileListData() const {
   // Get current path from query string (default to root)
