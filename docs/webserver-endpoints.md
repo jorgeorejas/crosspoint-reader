@@ -161,6 +161,9 @@ curl http://crosspoint.local/api/calendars
 {
   "version": 1,
   "timezoneOffsetMinutes": 0,
+  "autoSyncOnOpen": true,
+  "autoSyncHourly": false,
+  "autoSyncIntervalMinutes": 60,
   "calendars": [
     {
       "id": "c1",
@@ -188,7 +191,7 @@ Replaces calendar config with the provided JSON.
 **Request:**
 ```bash
 curl -X POST -H "Content-Type: application/json" \\
-  -d '{"timezoneOffsetMinutes":0,"calendars":[{"id":"c1","url":"https://example.com/calendar.ics","tag":"Work","enabled":true,"lastSyncEpoch":0}]}' \\
+  -d '{"timezoneOffsetMinutes":0,"autoSyncOnOpen":true,"autoSyncHourly":false,"autoSyncIntervalMinutes":60,"calendars":[{"id":"c1","url":"https://example.com/calendar.ics","tag":"Work","enabled":true,"lastSyncEpoch":0}]}' \\
   http://crosspoint.local/api/calendars
 ```
 

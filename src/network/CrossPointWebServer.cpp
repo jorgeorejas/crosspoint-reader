@@ -364,6 +364,9 @@ void CrossPointWebServer::handleCalendarGet() const {
   JsonDocument doc;
   doc["version"] = config.version;
   doc["timezoneOffsetMinutes"] = config.timezoneOffsetMinutes;
+  doc["autoSyncOnOpen"] = config.autoSyncOnOpen;
+  doc["autoSyncHourly"] = config.autoSyncHourly;
+  doc["autoSyncIntervalMinutes"] = config.autoSyncIntervalMinutes;
   JsonArray calendars = doc["calendars"].to<JsonArray>();
   for (const auto& entry : config.calendars) {
     JsonObject item = calendars.add<JsonObject>();
@@ -402,6 +405,9 @@ void CrossPointWebServer::handleCalendarPost() const {
   }
 
   config.timezoneOffsetMinutes = doc["timezoneOffsetMinutes"] | 0;
+  config.autoSyncOnOpen = doc["autoSyncOnOpen"] | true;
+  config.autoSyncHourly = doc["autoSyncHourly"] | false;
+  config.autoSyncIntervalMinutes = doc["autoSyncIntervalMinutes"] | 60;
   const JsonArray calendars = doc["calendars"].as<JsonArray>();
   if (calendars.isNull()) {
     server->send(400, "text/plain", "Missing calendars");

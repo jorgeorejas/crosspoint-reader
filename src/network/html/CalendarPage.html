@@ -111,10 +111,23 @@
         <input id="tzOffset" type="number" value="0" />
       </div>
       <div class="row">
+        <label for="autoSyncOnOpen">Auto-sync on open</label>
+        <input id="autoSyncOnOpen" type="checkbox" />
+      </div>
+      <div class="row">
+        <label for="autoSyncHourly">Auto-sync hourly</label>
+        <input id="autoSyncHourly" type="checkbox" />
+      </div>
+      <div class="row">
+        <label>Auto-sync interval</label>
+        <div>60 minutes (fixed)</div>
+      </div>
+      <div class="row">
         <button class="btn secondary" onclick="saveConfig()">Save</button>
         <button class="btn" onclick="syncNow()">Sync Now</button>
       </div>
       <div id="syncStatus" class="status"></div>
+      <div id="cacheStatus" class="status"></div>
     </div>
 
     <div class="card">
@@ -154,6 +167,14 @@
         const res = await fetch('/api/calendars');
         config = await res.json();
         document.getElementById('tzOffset').value = config.timezoneOffsetMinutes || 0;
+        document.getElementById('autoSyncOnOpen').checked = config.autoSyncOnOpen !== false;
+        document.getElementById('autoSyncHourly').checked = !!config.autoSyncHourly;
+        const cache = config.cache || {};
+        const count = cache.eventCount || 0;
+        const generated = cache.generatedAtEpoch
+          ? new Date(cache.generatedAtEpoch * 1000).toLocaleString()
+          : 'Never';
+        document.getElementById('cacheStatus').textContent = `Cached events: ${count} (last: ${generated})`;
         renderCalendars();
       }
 
@@ -209,11 +230,17 @@
       async function saveConfig() {
         clearError();
         config.timezoneOffsetMinutes = parseInt(document.getElementById('tzOffset').value || '0', 10);
+        config.autoSyncOnOpen = document.getElementById('autoSyncOnOpen').checked;
+        config.autoSyncHourly = document.getElementById('autoSyncHourly').checked;
+        config.autoSyncIntervalMinutes = 60;
         const res = await fetch('/api/calendars', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             timezoneOffsetMinutes: config.timezoneOffsetMinutes,
+            autoSyncOnOpen: config.autoSyncOnOpen,
+            autoSyncHourly: config.autoSyncHourly,
+            autoSyncIntervalMinutes: config.autoSyncIntervalMinutes,
             calendars: config.calendars,
           }),
         });

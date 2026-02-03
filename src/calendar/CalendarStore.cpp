@@ -65,6 +65,9 @@ bool CalendarStore::loadConfig(CalendarConfig& outConfig) {
 
   outConfig.version = doc["version"] | 1;
   outConfig.timezoneOffsetMinutes = doc["timezoneOffsetMinutes"] | 0;
+  outConfig.autoSyncOnOpen = doc["autoSyncOnOpen"] | true;
+  outConfig.autoSyncHourly = doc["autoSyncHourly"] | false;
+  outConfig.autoSyncIntervalMinutes = doc["autoSyncIntervalMinutes"] | 60;
 
   const JsonArray calendars = doc["calendars"].as<JsonArray>();
   if (!calendars.isNull()) {
@@ -87,6 +90,9 @@ bool CalendarStore::saveConfig(const CalendarConfig& config) {
   JsonDocument doc;
   doc["version"] = config.version;
   doc["timezoneOffsetMinutes"] = config.timezoneOffsetMinutes;
+  doc["autoSyncOnOpen"] = config.autoSyncOnOpen;
+  doc["autoSyncHourly"] = config.autoSyncHourly;
+  doc["autoSyncIntervalMinutes"] = config.autoSyncIntervalMinutes;
 
   JsonArray calendars = doc["calendars"].to<JsonArray>();
   for (const auto& entry : config.calendars) {
@@ -130,11 +136,13 @@ bool CalendarStore::loadCache(CalendarCache& outCache) {
       CalendarEvent ev;
       ev.calendarId = item["calendarId"] | "";
       ev.tag = item["tag"] | "";
+      ev.uid = item["uid"] | "";
       ev.startEpoch = item["startEpoch"] | 0;
       ev.endEpoch = item["endEpoch"] | 0;
       ev.allDay = item["allDay"] | false;
       ev.summary = item["summary"] | "";
       ev.location = item["location"] | "";
+      ev.description = item["description"] | "";
       outCache.events.push_back(ev);
     }
   }
@@ -154,11 +162,13 @@ bool CalendarStore::saveCache(const CalendarCache& cache) {
     JsonObject item = events.add<JsonObject>();
     item["calendarId"] = ev.calendarId;
     item["tag"] = ev.tag;
+    item["uid"] = ev.uid;
     item["startEpoch"] = static_cast<int64_t>(ev.startEpoch);
     item["endEpoch"] = static_cast<int64_t>(ev.endEpoch);
     item["allDay"] = ev.allDay;
     item["summary"] = ev.summary;
     item["location"] = ev.location;
+    item["description"] = ev.description;
   }
 
   String json;
@@ -169,6 +179,11 @@ bool CalendarStore::saveCache(const CalendarCache& cache) {
 bool CalendarStore::validateConfig(const CalendarConfig& config, std::string& error) {
   if (static_cast<int>(config.calendars.size()) > MAX_CALENDARS) {
     error = "Too many calendars";
+    return false;
+  }
+
+  if (config.autoSyncIntervalMinutes != 60) {
+    error = "Auto-sync interval must be 60 minutes";
     return false;
   }
 

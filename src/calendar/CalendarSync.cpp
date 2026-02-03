@@ -68,7 +68,8 @@ CalendarSyncResult CalendarSync::syncCalendars(CalendarConfig& config) {
 
     std::vector<CalendarEvent> events;
     std::string parseError;
-    if (!IcsParser::parseFile(filePath, entry.id, entry.tag, config.timezoneOffsetMinutes, events, parseError)) {
+    if (!IcsParser::parseFile(filePath, entry.id, entry.tag, config.timezoneOffsetMinutes, rangeStart, rangeEnd, events,
+                              parseError)) {
       item.ok = false;
       item.message = parseError.empty() ? "parse failed" : parseError;
       result.items.push_back(item);

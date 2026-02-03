@@ -4,6 +4,8 @@
 #include <WiFi.h>
 
 #include <ctime>
+#include <algorithm>
+#include <cctype>
 
 #include "MappedInputManager.h"
 #include "ScreenComponents.h"
@@ -11,6 +13,7 @@
 #include "calendar/CalendarStore.h"
 #include "calendar/CalendarSync.h"
 #include "fontIds.h"
+#include "activities/util/KeyboardEntryActivity.h"
 #include "util/TimeUtils.h"
 
 namespace {
@@ -18,6 +21,15 @@ constexpr int CONTENT_TOP = 70;
 constexpr int LEFT_MARGIN = 20;
 constexpr int RIGHT_MARGIN = 20;
 constexpr int LINE_HEIGHT = 28;
+constexpr int LONG_PRESS_MS = 1000;
+
+std::string trimText(const std::string& s) {
+  size_t start = 0;
+  while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) start++;
+  size_t end = s.size();
+  while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1]))) end--;
+  return s.substr(start, end - start);
+}
 }  // namespace
 
 void CalendarActivity::taskTrampoline(void* param) {
@@ -33,7 +45,10 @@ void CalendarActivity::onEnter() {
   selectorIndex = 0;
   statusMessage = "Loading calendar...";
   errorMessage.clear();
+  filterText.clear();
   updateRequired = true;
+  lastAutoSyncEpoch = 0;
+  confirmLongPressHandled = false;
 
   xTaskCreate(&CalendarActivity::taskTrampoline, "CalendarActivityTask", 4096, this, 1, &displayTaskHandle);
 
@@ -59,14 +74,36 @@ void CalendarActivity::loadCacheAndConfig() {
   CalendarStore::loadConfig(config);
   CalendarStore::loadCache(cache);
   TimeUtils::applyTimezoneOffset(config.timezoneOffsetMinutes);
+  if (cache.generatedAtEpoch > 0) {
+    lastAutoSyncEpoch = cache.generatedAtEpoch;
+  }
   buildDisplayItems();
+}
+
+bool CalendarActivity::matchesFilter(const CalendarEvent& ev) const {
+  if (filterText.empty()) {
+    return true;
+  }
+  auto toUpper = [](const std::string& in) {
+    std::string out = in;
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return std::toupper(c); });
+    return out;
+  };
+  const std::string needle = toUpper(filterText);
+  const std::string haystack = toUpper(ev.summary + " " + ev.location + " " + ev.tag + " " + ev.description);
+  return haystack.find(needle) != std::string::npos;
 }
 
 void CalendarActivity::buildDisplayItems() {
   displayItems.clear();
+  detailEvent = nullptr;
 
   std::string lastDate;
   for (const auto& ev : cache.events) {
+    if (!matchesFilter(ev)) {
+      continue;
+    }
+
     std::tm* tmVal = localtime(&ev.startEpoch);
     if (!tmVal) {
       continue;
@@ -119,7 +156,13 @@ void CalendarActivity::checkAndConnectWifi() {
   updateRequired = true;
 
   if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-    performSync();
+    if (config.autoSyncOnOpen) {
+      performSync();
+    } else {
+      state = State::BROWSING;
+      statusMessage = "Press Confirm to sync";
+      updateRequired = true;
+    }
   } else {
     state = State::BROWSING;
     statusMessage = "Press Confirm to sync";
@@ -163,6 +206,7 @@ void CalendarActivity::performSync() {
   cache = syncResult.cache;
   CalendarStore::saveCache(cache);
   CalendarStore::saveConfig(config);
+  lastAutoSyncEpoch = cache.generatedAtEpoch;
   buildDisplayItems();
 
   state = State::BROWSING;
@@ -171,7 +215,7 @@ void CalendarActivity::performSync() {
 }
 
 void CalendarActivity::loop() {
-  if (state == State::WIFI_SELECTION) {
+  if (subActivity) {
     ActivityWithSubactivity::loop();
     return;
   }
@@ -192,18 +236,73 @@ void CalendarActivity::loop() {
     return;
   }
 
+  if (state == State::DETAIL) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      state = State::BROWSING;
+      detailEvent = nullptr;
+      updateRequired = true;
+    }
+    return;
+  }
+
   if (state == State::BROWSING) {
+    if (config.autoSyncHourly && WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+      const time_t now = time(nullptr);
+      if (now > 0 && (lastAutoSyncEpoch == 0 || now - lastAutoSyncEpoch >= config.autoSyncIntervalMinutes * 60)) {
+        performSync();
+        return;
+      }
+    }
+
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       onGoHome();
       return;
     }
 
+    if (mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+        mappedInput.getHeldTime() >= LONG_PRESS_MS && !confirmLongPressHandled) {
+      confirmLongPressHandled = true;
+      state = State::FILTER_ENTRY;
+      enterNewActivity(new KeyboardEntryActivity(
+          renderer, mappedInput, "Search", filterText, 10, 64, false,
+          [this](const std::string& text) {
+            this->exitActivity();
+            this->filterText = text;
+            this->buildDisplayItems();
+            this->confirmLongPressHandled = false;
+            this->state = State::BROWSING;
+            this->updateRequired = true;
+          },
+          [this]() {
+            this->exitActivity();
+            this->confirmLongPressHandled = false;
+            this->state = State::BROWSING;
+            this->updateRequired = true;
+          }));
+      return;
+    }
+
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-        performSync();
-      } else {
-        launchWifiSelection();
+      confirmLongPressHandled = false;
+      if (displayItems.empty()) {
+        if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+          performSync();
+        } else {
+          launchWifiSelection();
+        }
+        return;
       }
+      if (displayItems[selectorIndex].isHeader) {
+        if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+          performSync();
+        } else {
+          launchWifiSelection();
+        }
+        return;
+      }
+      detailEvent = displayItems[selectorIndex].event;
+      state = State::DETAIL;
+      updateRequired = true;
       return;
     }
 
@@ -251,6 +350,8 @@ void CalendarActivity::render() const {
 
   if (state == State::BROWSING) {
     renderBrowsing();
+  } else if (state == State::DETAIL) {
+    renderDetail();
   } else {
     renderStatus();
   }
@@ -270,9 +371,16 @@ void CalendarActivity::renderBrowsing() const {
   if (pageItems < 1) pageItems = 1;
 
   if (itemCount == 0) {
-    renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, CONTENT_TOP, "No events found");
+    const std::string emptyText = filterText.empty() ? "No events found" : "No matching events";
+    renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, CONTENT_TOP, emptyText.c_str());
     renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, CONTENT_TOP + 30, statusMessage.c_str());
     return;
+  }
+
+  if (!filterText.empty()) {
+    const std::string filterLabel = "Filter: " + filterText;
+    auto truncated = renderer.truncatedText(UI_10_FONT_ID, filterLabel.c_str(), pageWidth - LEFT_MARGIN - RIGHT_MARGIN);
+    renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, CONTENT_TOP - 25, truncated.c_str());
   }
 
   const int pageStartIndex = selectorIndex / pageItems * pageItems;
@@ -299,6 +407,79 @@ void CalendarActivity::renderBrowsing() const {
   ScreenComponents::drawScrollIndicator(renderer, selectorIndex / pageItems + 1, (itemCount + pageItems - 1) / pageItems,
                                         CONTENT_TOP, contentHeight);
 
-  const auto labels = mappedInput.mapLabels("Back", "Sync", "<", ">");
+  const char* confirmLabel = displayItems.empty() ? "Sync" : "Details";
+  const auto labels = mappedInput.mapLabels("Back", confirmLabel, "<", ">");
+  renderer.drawButtonHints(UI_10_FONT_ID, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, renderer.getScreenHeight() - 28, "Hold Confirm: Search");
+}
+
+void CalendarActivity::renderDetail() const {
+  renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, CONTENT_TOP - 20, "Event Details");
+  if (!detailEvent) {
+    renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, CONTENT_TOP, "No event selected");
+    return;
+  }
+
+  const auto pageWidth = renderer.getScreenWidth();
+  const int maxWidth = pageWidth - LEFT_MARGIN - RIGHT_MARGIN;
+  int y = CONTENT_TOP;
+
+  auto drawWrapped = [&](const std::string& label, const std::string& value) {
+    if (value.empty()) {
+      return;
+    }
+    const std::string full = label + value;
+    std::string remaining = full;
+    while (!remaining.empty()) {
+      std::string line = remaining;
+      while (!line.empty() && renderer.getTextWidth(UI_10_FONT_ID, line.c_str()) > maxWidth) {
+        size_t cut = line.find_last_of(' ');
+        if (cut == std::string::npos || cut == 0) {
+          line = renderer.truncatedText(UI_10_FONT_ID, line.c_str(), maxWidth);
+          break;
+        }
+        line = line.substr(0, cut);
+      }
+      renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, y, line.c_str());
+      y += LINE_HEIGHT;
+      if (line.size() >= remaining.size()) {
+        break;
+      }
+      remaining = trimText(remaining.substr(line.size()));
+    }
+  };
+
+  const std::string summary = detailEvent->summary.empty() ? "(No title)" : detailEvent->summary;
+  drawWrapped("Title: ", summary);
+
+  std::tm* tmVal = localtime(&detailEvent->startEpoch);
+  if (tmVal) {
+    char buf[64] = {0};
+    if (detailEvent->allDay) {
+      strftime(buf, sizeof(buf), "%a %b %d (All day)", tmVal);
+      drawWrapped("When: ", buf);
+    } else {
+      char endBuf[32] = {0};
+      std::tm* endTm = localtime(&detailEvent->endEpoch);
+      if (endTm) {
+        strftime(endBuf, sizeof(endBuf), "%H:%M", endTm);
+      }
+      strftime(buf, sizeof(buf), "%a %b %d %H:%M", tmVal);
+      if (endBuf[0] != '\0') {
+        std::string range = std::string(buf) + " - " + endBuf;
+        drawWrapped("When: ", range);
+      } else {
+        drawWrapped("When: ", buf);
+      }
+    }
+  }
+
+  if (!detailEvent->tag.empty()) {
+    drawWrapped("Tag: ", detailEvent->tag);
+  }
+  drawWrapped("Location: ", detailEvent->location);
+  drawWrapped("Notes: ", detailEvent->description);
+
+  const auto labels = mappedInput.mapLabels("Back", "", "", "");
   renderer.drawButtonHints(UI_10_FONT_ID, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }

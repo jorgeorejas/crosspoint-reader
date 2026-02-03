@@ -15,17 +15,22 @@ struct CalendarConfigEntry {
 struct CalendarConfig {
   uint8_t version = 1;
   int timezoneOffsetMinutes = 0;
+  bool autoSyncOnOpen = true;
+  bool autoSyncHourly = false;
+  int autoSyncIntervalMinutes = 60;
   std::vector<CalendarConfigEntry> calendars;
 };
 
 struct CalendarEvent {
   std::string calendarId;
   std::string tag;
+  std::string uid;
   time_t startEpoch = 0;
   time_t endEpoch = 0;
   bool allDay = false;
   std::string summary;
   std::string location;
+  std::string description;
 };
 
 struct CalendarCache {

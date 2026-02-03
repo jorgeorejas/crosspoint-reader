@@ -21,7 +21,7 @@ class CalendarActivity final : public ActivityWithSubactivity {
   void loop() override;
 
  private:
-  enum class State { LOADING_CACHE, CHECK_WIFI, WIFI_SELECTION, SYNCING, BROWSING, ERROR };
+  enum class State { LOADING_CACHE, CHECK_WIFI, WIFI_SELECTION, SYNCING, BROWSING, DETAIL, FILTER_ENTRY, ERROR };
 
   struct DisplayItem {
     bool isHeader = false;
@@ -36,12 +36,16 @@ class CalendarActivity final : public ActivityWithSubactivity {
   State state = State::LOADING_CACHE;
   std::string statusMessage;
   std::string errorMessage;
+  std::string filterText;
 
   CalendarConfig config;
   CalendarCache cache;
   std::vector<DisplayItem> displayItems;
 
   int selectorIndex = 0;
+  bool confirmLongPressHandled = false;
+  time_t lastAutoSyncEpoch = 0;
+  const CalendarEvent* detailEvent = nullptr;
 
   const std::function<void()> onGoHome;
 
@@ -49,10 +53,12 @@ class CalendarActivity final : public ActivityWithSubactivity {
   [[noreturn]] void displayTaskLoop();
   void render() const;
   void renderBrowsing() const;
+  void renderDetail() const;
   void renderStatus() const;
 
   void loadCacheAndConfig();
   void buildDisplayItems();
+  bool matchesFilter(const CalendarEvent& ev) const;
   void checkAndConnectWifi();
   void launchWifiSelection();
   void onWifiSelectionComplete(bool connected);
