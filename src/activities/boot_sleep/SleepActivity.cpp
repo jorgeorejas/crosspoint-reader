@@ -5,13 +5,28 @@
 #include <SDCardManager.h>
 #include <Txt.h>
 #include <Xtc.h>
+#include <WiFi.h>
+
+#include <algorithm>
+#include <ctime>
+#include <vector>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "ScreenComponents.h"
+#include "calendar/CalendarStore.h"
+#include "calendar/CalendarSync.h"
 #include "fontIds.h"
 #include "images/CrossLarge.h"
+#include "util/TimeUtils.h"
 #include "util/StringUtils.h"
+
+namespace {
+constexpr int LEFT_MARGIN = 20;
+constexpr int RIGHT_MARGIN = 20;
+constexpr int HEADER_TOP = 20;
+constexpr int FOOTER_SPACE = 20;
+}  // namespace
 
 void SleepActivity::onEnter() {
   Activity::onEnter();
@@ -28,6 +43,10 @@ void SleepActivity::onEnter() {
 
   if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::COVER) {
     return renderCoverSleepScreen();
+  }
+
+  if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::CALENDAR) {
+    return renderCalendarSleepScreen();
   }
 
   renderDefaultSleepScreen();
@@ -264,6 +283,114 @@ void SleepActivity::renderCoverSleepScreen() const {
   }
 
   renderDefaultSleepScreen();
+}
+
+void SleepActivity::renderCalendarSleepScreen() const {
+  CalendarConfig config;
+  CalendarCache cache;
+  bool hasCache = false;
+
+  CalendarStore::loadConfig(config);
+
+  if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+    CalendarSyncResult syncResult = CalendarSync::syncCalendars(config);
+    if (syncResult.ok) {
+      cache = syncResult.cache;
+      hasCache = true;
+      CalendarStore::saveCache(cache);
+      CalendarStore::saveConfig(config);
+    }
+  }
+
+  if (!hasCache) {
+    hasCache = CalendarStore::loadCache(cache);
+  }
+
+  if (!hasCache || cache.events.empty()) {
+    return renderDefaultSleepScreen();
+  }
+
+  TimeUtils::applyTimezoneOffset(config.timezoneOffsetMinutes);
+
+  const time_t now = time(nullptr);
+  if (now <= 0) {
+    return renderDefaultSleepScreen();
+  }
+  const time_t windowEnd = now + 24 * 60 * 60;
+
+  std::tm nowTm = *localtime(&now);
+  std::tm dayStartTm = nowTm;
+  dayStartTm.tm_hour = 0;
+  dayStartTm.tm_min = 0;
+  dayStartTm.tm_sec = 0;
+  const time_t dayStart = mktime(&dayStartTm);
+  const time_t dayEnd = dayStart + 24 * 60 * 60;
+
+  std::vector<const CalendarEvent*> allDay;
+  std::vector<const CalendarEvent*> timed;
+
+  for (const auto& ev : cache.events) {
+    if (ev.allDay) {
+      if (ev.startEpoch < dayEnd && ev.endEpoch > dayStart) {
+        allDay.push_back(&ev);
+      }
+      continue;
+    }
+
+    if (ev.startEpoch < windowEnd && ev.endEpoch >= now) {
+      timed.push_back(&ev);
+    }
+  }
+
+  auto byStart = [](const CalendarEvent* a, const CalendarEvent* b) { return a->startEpoch < b->startEpoch; };
+  std::sort(allDay.begin(), allDay.end(), byStart);
+  std::sort(timed.begin(), timed.end(), byStart);
+
+  if (allDay.empty() && timed.empty()) {
+    return renderDefaultSleepScreen();
+  }
+
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
+  const int lineHeight = renderer.getTextHeight(UI_10_FONT_ID) + 6;
+  const int listTop = HEADER_TOP + 55;
+  int maxLines = (pageHeight - listTop - FOOTER_SPACE) / lineHeight;
+  if (maxLines < 1) maxLines = 1;
+
+  renderer.clearScreen();
+  renderer.drawCenteredText(UI_12_FONT_ID, HEADER_TOP, "Next 24 hours", true, EpdFontFamily::BOLD);
+
+  char dateBuf[32] = {0};
+  strftime(dateBuf, sizeof(dateBuf), "%a %b %d %H:%M", &nowTm);
+  renderer.drawCenteredText(UI_10_FONT_ID, HEADER_TOP + 25, dateBuf, true);
+
+  int y = listTop;
+  int linesUsed = 0;
+  auto drawLine = [&](const std::string& line) {
+    if (linesUsed >= maxLines) return;
+    const auto truncated = renderer.truncatedText(UI_10_FONT_ID, line.c_str(), pageWidth - LEFT_MARGIN - RIGHT_MARGIN);
+    renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, y, truncated.c_str());
+    y += lineHeight;
+    linesUsed++;
+  };
+
+  for (const auto* ev : allDay) {
+    if (linesUsed >= maxLines) break;
+    const std::string title = ev->summary.empty() ? "(No title)" : ev->summary;
+    drawLine("All day " + title);
+  }
+
+  for (const auto* ev : timed) {
+    if (linesUsed >= maxLines) break;
+    std::tm* startTm = localtime(&ev->startEpoch);
+    if (!startTm) continue;
+    char timeBuf[8] = {0};
+    strftime(timeBuf, sizeof(timeBuf), "%H:%M", startTm);
+    const std::string title = ev->summary.empty() ? "(No title)" : ev->summary;
+    drawLine(std::string(timeBuf) + " " + title);
+  }
+
+  renderer.displayBuffer(HalDisplay::HALF_REFRESH);
 }
 
 void SleepActivity::renderBlankSleepScreen() const {

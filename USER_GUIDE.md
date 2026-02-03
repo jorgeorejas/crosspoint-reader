@@ -101,6 +101,7 @@ The Settings screen allows you to configure the device's behavior. There are a f
   - "Light" - The same default sleep screen, on a white background
   - "Custom" - Custom images from the SD card; see [Sleep Screen](#36-sleep-screen) below for more information
   - "Cover" - The book cover image (Note: this is experimental and may not work as expected)
+  - "Calendar" - A list of the next 24 hours of events from your cached calendar
   - "None" - A blank screen
 - **Sleep Screen Cover Mode**: How to display the book cover when "Cover" sleep screen is selected:
   - "Fit" (default) - Scale the image down to fit centered on the screen, padding with white borders as necessary
