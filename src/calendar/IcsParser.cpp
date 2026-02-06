@@ -16,7 +16,7 @@ namespace {
 constexpr size_t MAX_LINE_LENGTH = 1024;
 constexpr int MAX_OCCURRENCES_PER_EVENT = 1000;
 
-std::string trim(const std::string& s) {
+inline std::string trim(const std::string& s) {
   size_t start = 0;
   while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) start++;
   size_t end = s.size();
@@ -24,9 +24,15 @@ std::string trim(const std::string& s) {
   return s.substr(start, end - start);
 }
 
-std::string toUpper(const std::string& s) {
+inline void toUpperInPlace(std::string& s) {
+  for (char& c : s) {
+    c = std::toupper(static_cast<unsigned char>(c));
+  }
+}
+
+inline std::string toUpper(const std::string& s) {
   std::string out = s;
-  std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return std::toupper(c); });
+  toUpperInPlace(out);
   return out;
 }
 
@@ -78,29 +84,31 @@ bool parseContentLine(const std::string& line, ContentLine& out) {
   if (colon == std::string::npos) {
     return false;
   }
-  const std::string left = line.substr(0, colon);
   out.value = line.substr(colon + 1);
 
-  const size_t semi = left.find(';');
-  out.name = toUpper(left.substr(0, semi));
-
-  if (semi == std::string::npos) {
+  const size_t semi = line.find(';', 0);
+  if (semi == std::string::npos || semi >= colon) {
+    out.name = toUpper(line.substr(0, colon));
     return true;
   }
 
-  const std::string paramPart = left.substr(semi + 1);
-  const auto paramTokens = split(paramPart, ';');
+  out.name = toUpper(line.substr(0, semi));
+
+  // Parse parameters
+  const auto paramTokens = split(line.substr(semi + 1, colon - semi - 1), ';');
   for (const auto& token : paramTokens) {
     if (token.empty()) continue;
     const size_t eq = token.find('=');
-    std::string key = eq == std::string::npos ? token : token.substr(0, eq);
-    std::string val = eq == std::string::npos ? "" : token.substr(eq + 1);
-    key = toUpper(key);
-    auto values = split(val, ',');
-    for (auto& v : values) {
-      v = trim(v);
+    std::string key = toUpper(eq == std::string::npos ? token : token.substr(0, eq));
+    if (eq == std::string::npos) {
+      out.params[key] = std::vector<std::string>{""};
+    } else {
+      auto values = split(token.substr(eq + 1), ',');
+      for (auto& v : values) {
+        v = trim(v);
+      }
+      out.params[std::move(key)] = std::move(values);
     }
-    out.params[key] = values;
   }
   return true;
 }
@@ -240,18 +248,22 @@ struct RRule {
   std::vector<int> bymonth;     // 1..12
 };
 
-int weekdayIndex(const std::string& token) {
-  const std::string day = toUpper(token);
-  if (day.size() < 2) return -1;
-  const std::string suffix = day.substr(day.size() - 2);
-  if (suffix == "SU") return 0;
-  if (suffix == "MO") return 1;
-  if (suffix == "TU") return 2;
-  if (suffix == "WE") return 3;
-  if (suffix == "TH") return 4;
-  if (suffix == "FR") return 5;
-  if (suffix == "SA") return 6;
-  return -1;
+inline int weekdayIndex(const std::string& token) {
+  if (token.size() < 2) return -1;
+  // Check last 2 chars (case-insensitive)
+  const char c1 = std::toupper(static_cast<unsigned char>(token[token.size() - 2]));
+  const char c2 = std::toupper(static_cast<unsigned char>(token[token.size() - 1]));
+  const uint16_t pair = (c1 << 8) | c2;
+  switch (pair) {
+    case ('S' << 8) | 'U': return 0;  // SU
+    case ('M' << 8) | 'O': return 1;  // MO
+    case ('T' << 8) | 'U': return 2;  // TU
+    case ('W' << 8) | 'E': return 3;  // WE
+    case ('T' << 8) | 'H': return 4;  // TH
+    case ('F' << 8) | 'R': return 5;  // FR
+    case ('S' << 8) | 'A': return 6;  // SA
+    default: return -1;
+  }
 }
 
 RRule parseRRule(const std::string& value, int timezoneOffsetMinutes) {
@@ -302,8 +314,8 @@ RRule parseRRule(const std::string& value, int timezoneOffsetMinutes) {
   return rule;
 }
 
-int daysInMonth(int year, int month) {
-  static const int kDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+inline int daysInMonth(int year, int month) {
+  constexpr int kDays[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
   if (month < 1 || month > 12) return 30;
   int days = kDays[month - 1];
   if (month == 2) {
@@ -712,7 +724,9 @@ bool IcsParser::parseFile(const std::string& path, const std::string& calendarId
     for (time_t occ : occurrences) {
       occurrenceSet.insert(occ);
       if (static_cast<int>(occurrenceSet.size()) >= MAX_OCCURRENCES_PER_EVENT) {
+        #ifdef DEBUG_CALENDAR
         Serial.printf("[%lu] [CAL] Occurrence cap hit for uid=%s\n", millis(), ev.uid.c_str());
+        #endif
         break;
       }
     }

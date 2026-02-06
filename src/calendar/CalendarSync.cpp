@@ -15,12 +15,9 @@ namespace {
 constexpr char CAL_DIR[] = "/.crosspoint/calendars";
 constexpr int CACHE_DAYS = 30;
 
-time_t nowEpoch() {
-  time_t now = time(nullptr);
-  if (now < 0) {
-    return 0;
-  }
-  return now;
+inline time_t nowEpoch() {
+  const time_t now = time(nullptr);
+  return (now < 0) ? 0 : now;
 }
 }  // namespace
 
@@ -57,7 +54,10 @@ CalendarSyncResult CalendarSync::syncCalendars(CalendarConfig& config) {
       continue;
     }
 
-    const std::string filePath = std::string(CAL_DIR) + "/" + entry.id + ".ics";
+    std::string filePath(CAL_DIR);
+    filePath += "/";
+    filePath += entry.id;
+    filePath += ".ics";
     const auto downloadResult = HttpDownloader::downloadToFileNoAuth(entry.url, filePath);
     if (downloadResult != HttpDownloader::OK) {
       item.ok = false;

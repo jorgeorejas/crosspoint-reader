@@ -228,13 +228,22 @@ void WifiSelectionActivity::attemptConnection() {
   connectionError.clear();
   updateRequired = true;
 
+  // Ensure WiFi is fully disconnected before attempting new connection
+  WiFi.disconnect(true);
+  delay(100);
+
   WiFi.mode(WIFI_STA);
+  delay(100);
+
+  Serial.printf("[%lu] [WIFI] Attempting connection to: %s\n", millis(), selectedSSID.c_str());
 
   if (selectedRequiresPassword && !enteredPassword.empty()) {
     WiFi.begin(selectedSSID.c_str(), enteredPassword.c_str());
   } else {
     WiFi.begin(selectedSSID.c_str());
   }
+
+  Serial.printf("[%lu] [WIFI] WiFi.begin() called, waiting for connection...\n", millis());
 }
 
 void WifiSelectionActivity::checkConnectionStatus() {

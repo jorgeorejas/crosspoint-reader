@@ -5,7 +5,6 @@
 #include <HardwareSerial.h>
 #include <SDCardManager.h>
 
-#include <algorithm>
 
 namespace {
 constexpr char CONFIG_PATH[] = "/.crosspoint/calendars.json";
@@ -51,15 +50,19 @@ bool writeStringToFile(const char* path, const std::string& data) {
 bool CalendarStore::loadConfig(CalendarConfig& outConfig) {
   outConfig = CalendarConfig();
 
-  std::string content;
-  if (!readFileToString(CONFIG_PATH, content)) {
+  FsFile file;
+  if (!SdMan.openFileForRead("CAL", CONFIG_PATH, file)) {
     return false;
   }
 
   JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, content);
+  const DeserializationError err = deserializeJson(doc, file);
+  file.close();
+
   if (err) {
+    #ifdef DEBUG_CALENDAR
     Serial.printf("[%lu] [CAL] Failed to parse config: %s\n", millis(), err.c_str());
+    #endif
     return false;
   }
 
@@ -112,15 +115,19 @@ bool CalendarStore::saveConfig(const CalendarConfig& config) {
 bool CalendarStore::loadCache(CalendarCache& outCache) {
   outCache = CalendarCache();
 
-  std::string content;
-  if (!readFileToString(CACHE_PATH, content)) {
+  FsFile file;
+  if (!SdMan.openFileForRead("CAL", CACHE_PATH, file)) {
     return false;
   }
 
   JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, content);
+  const DeserializationError err = deserializeJson(doc, file);
+  file.close();
+
   if (err) {
+    #ifdef DEBUG_CALENDAR
     Serial.printf("[%lu] [CAL] Failed to parse cache: %s\n", millis(), err.c_str());
+    #endif
     return false;
   }
 

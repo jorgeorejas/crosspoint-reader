@@ -90,8 +90,16 @@ void MyLibraryActivity::loadFiles() {
 
   root.rewindDirectory();
 
+  constexpr int MAX_FILES_PER_DIR = 500;  // Limit to prevent hang on large directories
+  int fileCount = 0;
   char name[500];
+
   for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
+    // Periodic yield to prevent watchdog timeout
+    if (fileCount % 50 == 0) {
+      delay(1);
+    }
+
     file.getName(name, sizeof(name));
     if (name[0] == '.' || strcmp(name, "System Volume Information") == 0) {
       file.close();
@@ -100,18 +108,28 @@ void MyLibraryActivity::loadFiles() {
 
     if (file.isDirectory()) {
       files.emplace_back(std::string(name) + "/");
+      fileCount++;
     } else {
       auto filename = std::string(name);
       if (StringUtils::checkFileExtension(filename, ".epub") || StringUtils::checkFileExtension(filename, ".xtch") ||
           StringUtils::checkFileExtension(filename, ".xtc") || StringUtils::checkFileExtension(filename, ".txt") ||
           StringUtils::checkFileExtension(filename, ".md")) {
         files.emplace_back(filename);
+        fileCount++;
       }
     }
     file.close();
+
+    // Stop if we've hit the limit
+    if (fileCount >= MAX_FILES_PER_DIR) {
+      Serial.printf("[%lu] [MLB] File limit reached (%d files), stopping scan\n", millis(), MAX_FILES_PER_DIR);
+      break;
+    }
   }
   root.close();
   sortFileList(files);
+
+  Serial.printf("[%lu] [MLB] Loaded %d files from %s\n", millis(), fileCount, basepath.c_str());
 }
 
 size_t MyLibraryActivity::findEntry(const std::string& name) const {
@@ -130,6 +148,11 @@ void MyLibraryActivity::onEnter() {
   Activity::onEnter();
 
   renderingMutex = xSemaphoreCreateMutex();
+
+  // Show loading screen for large directory scans
+  if (basepath == "/" || basepath.empty()) {
+    ScreenComponents::drawPopup(renderer, "Loading library...");
+  }
 
   // Load data for both tabs
   loadRecentBooks();

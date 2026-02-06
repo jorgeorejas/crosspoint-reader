@@ -23,7 +23,7 @@ constexpr int RIGHT_MARGIN = 20;
 constexpr int LINE_HEIGHT = 28;
 constexpr int LONG_PRESS_MS = 1000;
 
-std::string trimText(const std::string& s) {
+inline std::string trimText(const std::string& s) {
   size_t start = 0;
   while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) start++;
   size_t end = s.size();
@@ -84,14 +84,30 @@ bool CalendarActivity::matchesFilter(const CalendarEvent& ev) const {
   if (filterText.empty()) {
     return true;
   }
-  auto toUpper = [](const std::string& in) {
-    std::string out = in;
-    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return std::toupper(c); });
-    return out;
+
+  // Case-insensitive search without creating temp strings
+  auto caseInsensitiveFind = [](const std::string& haystack, const std::string& needle) -> bool {
+    if (needle.empty()) return true;
+    if (haystack.size() < needle.size()) return false;
+
+    for (size_t i = 0; i <= haystack.size() - needle.size(); ++i) {
+      bool match = true;
+      for (size_t j = 0; j < needle.size(); ++j) {
+        if (std::toupper(static_cast<unsigned char>(haystack[i + j])) !=
+            std::toupper(static_cast<unsigned char>(needle[j]))) {
+          match = false;
+          break;
+        }
+      }
+      if (match) return true;
+    }
+    return false;
   };
-  const std::string needle = toUpper(filterText);
-  const std::string haystack = toUpper(ev.summary + " " + ev.location + " " + ev.tag + " " + ev.description);
-  return haystack.find(needle) != std::string::npos;
+
+  return caseInsensitiveFind(ev.summary, filterText) ||
+         caseInsensitiveFind(ev.location, filterText) ||
+         caseInsensitiveFind(ev.tag, filterText) ||
+         caseInsensitiveFind(ev.description, filterText);
 }
 
 void CalendarActivity::buildDisplayItems() {
@@ -99,45 +115,51 @@ void CalendarActivity::buildDisplayItems() {
   detailEvent = nullptr;
 
   std::string lastDate;
+  lastDate.reserve(32);
+  char dateBuf[32];
+  char timeBuf[16];
+
   for (const auto& ev : cache.events) {
     if (!matchesFilter(ev)) {
       continue;
     }
 
-    std::tm* tmVal = localtime(&ev.startEpoch);
+    const std::tm* tmVal = localtime(&ev.startEpoch);
     if (!tmVal) {
       continue;
     }
-    char dateBuf[32] = {0};
-    strftime(dateBuf, sizeof(dateBuf), "%a %b %d", tmVal);
-    std::string dateStr = dateBuf;
 
-    if (dateStr != lastDate) {
+    strftime(dateBuf, sizeof(dateBuf), "%a %b %d", tmVal);
+
+    if (lastDate != dateBuf) {
       DisplayItem header;
       header.isHeader = true;
-      header.text = dateStr;
-      displayItems.push_back(header);
-      lastDate = dateStr;
-    }
-
-    char timeBuf[16] = {0};
-    std::string timeStr;
-    if (ev.allDay) {
-      timeStr = "All day";
-    } else {
-      strftime(timeBuf, sizeof(timeBuf), "%H:%M", tmVal);
-      timeStr = timeBuf;
+      header.text = dateBuf;
+      displayItems.push_back(std::move(header));
+      lastDate = dateBuf;
     }
 
     DisplayItem item;
     item.isHeader = false;
-    std::string summary = ev.summary.empty() ? "(No title)" : ev.summary;
-    if (!ev.tag.empty()) {
-      summary += " [" + ev.tag + "]";
-    }
-    item.text = timeStr + " " + summary;
     item.event = &ev;
-    displayItems.push_back(item);
+
+    // Build text efficiently
+    if (ev.allDay) {
+      item.text = "All day ";
+    } else {
+      strftime(timeBuf, sizeof(timeBuf), "%H:%M", tmVal);
+      item.text = timeBuf;
+      item.text += " ";
+    }
+
+    item.text += ev.summary.empty() ? "(No title)" : ev.summary;
+    if (!ev.tag.empty()) {
+      item.text += " [";
+      item.text += ev.tag;
+      item.text += "]";
+    }
+
+    displayItems.push_back(std::move(item));
   }
 
   if (selectorIndex >= static_cast<int>(displayItems.size())) {
@@ -420,53 +442,55 @@ void CalendarActivity::renderDetail() const {
     return;
   }
 
-  const auto pageWidth = renderer.getScreenWidth();
-  const int maxWidth = pageWidth - LEFT_MARGIN - RIGHT_MARGIN;
+  const int maxWidth = renderer.getScreenWidth() - LEFT_MARGIN - RIGHT_MARGIN;
   int y = CONTENT_TOP;
 
-  auto drawWrapped = [&](const std::string& label, const std::string& value) {
+  auto drawWrapped = [&](const char* label, const std::string& value) {
     if (value.empty()) {
       return;
     }
-    const std::string full = label + value;
-    std::string remaining = full;
-    while (!remaining.empty()) {
-      std::string line = remaining;
-      while (!line.empty() && renderer.getTextWidth(UI_10_FONT_ID, line.c_str()) > maxWidth) {
-        size_t cut = line.find_last_of(' ');
+    // Draw label + value efficiently
+    std::string line;
+    line.reserve(maxWidth);
+    line = label;
+    line += value;
+
+    size_t pos = 0;
+    while (pos < line.size()) {
+      std::string segment = line.substr(pos);
+      while (!segment.empty() && renderer.getTextWidth(UI_10_FONT_ID, segment.c_str()) > maxWidth) {
+        size_t cut = segment.find_last_of(' ');
         if (cut == std::string::npos || cut == 0) {
-          line = renderer.truncatedText(UI_10_FONT_ID, line.c_str(), maxWidth);
+          segment = renderer.truncatedText(UI_10_FONT_ID, segment.c_str(), maxWidth);
           break;
         }
-        line = line.substr(0, cut);
+        segment = segment.substr(0, cut);
       }
-      renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, y, line.c_str());
+      renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, y, segment.c_str());
       y += LINE_HEIGHT;
-      if (line.size() >= remaining.size()) {
-        break;
-      }
-      remaining = trimText(remaining.substr(line.size()));
+      pos += segment.size();
+      // Skip spaces at break point
+      while (pos < line.size() && line[pos] == ' ') ++pos;
+      if (segment.size() == 0 || pos >= line.size()) break;
     }
   };
 
-  const std::string summary = detailEvent->summary.empty() ? "(No title)" : detailEvent->summary;
-  drawWrapped("Title: ", summary);
+  drawWrapped("Title: ", detailEvent->summary.empty() ? "(No title)" : detailEvent->summary);
 
-  std::tm* tmVal = localtime(&detailEvent->startEpoch);
+  const std::tm* tmVal = localtime(&detailEvent->startEpoch);
   if (tmVal) {
-    char buf[64] = {0};
+    char buf[64];
     if (detailEvent->allDay) {
       strftime(buf, sizeof(buf), "%a %b %d (All day)", tmVal);
       drawWrapped("When: ", buf);
     } else {
-      char endBuf[32] = {0};
-      std::tm* endTm = localtime(&detailEvent->endEpoch);
-      if (endTm) {
-        strftime(endBuf, sizeof(endBuf), "%H:%M", endTm);
-      }
+      const std::tm* endTm = localtime(&detailEvent->endEpoch);
       strftime(buf, sizeof(buf), "%a %b %d %H:%M", tmVal);
-      if (endBuf[0] != '\0') {
-        std::string range = std::string(buf) + " - " + endBuf;
+      if (endTm) {
+        char endBuf[32];
+        strftime(endBuf, sizeof(endBuf), " - %H:%M", endTm);
+        std::string range = buf;
+        range += endBuf;
         drawWrapped("When: ", range);
       } else {
         drawWrapped("When: ", buf);
@@ -477,8 +501,12 @@ void CalendarActivity::renderDetail() const {
   if (!detailEvent->tag.empty()) {
     drawWrapped("Tag: ", detailEvent->tag);
   }
-  drawWrapped("Location: ", detailEvent->location);
-  drawWrapped("Notes: ", detailEvent->description);
+  if (!detailEvent->location.empty()) {
+    drawWrapped("Location: ", detailEvent->location);
+  }
+  if (!detailEvent->description.empty()) {
+    drawWrapped("Notes: ", detailEvent->description);
+  }
 
   const auto labels = mappedInput.mapLabels("Back", "", "", "");
   renderer.drawButtonHints(UI_10_FONT_ID, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
