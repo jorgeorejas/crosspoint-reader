@@ -93,7 +93,7 @@ static HttpDownloader::DownloadError downloadToFileInternal(const std::string& u
   if (httpCode != HTTP_CODE_OK) {
     Serial.printf("[%lu] [HTTP] Download failed: %d\n", millis(), httpCode);
     http.end();
-    return HTTP_ERROR;
+    return HttpDownloader::HTTP_ERROR;
   }
 
   const size_t contentLength = http.getSize();
@@ -109,7 +109,7 @@ static HttpDownloader::DownloadError downloadToFileInternal(const std::string& u
   if (!SdMan.openFileForWrite("HTTP", destPath.c_str(), file)) {
     Serial.printf("[%lu] [HTTP] Failed to open file for writing\n", millis());
     http.end();
-    return FILE_ERROR;
+    return HttpDownloader::FILE_ERROR;
   }
 
   // Get the stream for chunked reading
@@ -119,10 +119,11 @@ static HttpDownloader::DownloadError downloadToFileInternal(const std::string& u
     file.close();
     SdMan.remove(destPath.c_str());
     http.end();
-    return HTTP_ERROR;
+    return HttpDownloader::HTTP_ERROR;
   }
 
   // Download in chunks
+  constexpr size_t DOWNLOAD_CHUNK_SIZE = 1024;
   uint8_t buffer[DOWNLOAD_CHUNK_SIZE];
   size_t downloaded = 0;
   const size_t total = contentLength > 0 ? contentLength : 0;
@@ -147,7 +148,7 @@ static HttpDownloader::DownloadError downloadToFileInternal(const std::string& u
       file.close();
       SdMan.remove(destPath.c_str());
       http.end();
-      return FILE_ERROR;
+      return HttpDownloader::FILE_ERROR;
     }
 
     downloaded += bytesRead;
@@ -166,7 +167,7 @@ static HttpDownloader::DownloadError downloadToFileInternal(const std::string& u
   if (contentLength > 0 && downloaded != contentLength) {
     Serial.printf("[%lu] [HTTP] Size mismatch: got %zu, expected %zu\n", millis(), downloaded, contentLength);
     SdMan.remove(destPath.c_str());
-    return HTTP_ERROR;
+    return HttpDownloader::HTTP_ERROR;
   }
 
   return HttpDownloader::OK;
