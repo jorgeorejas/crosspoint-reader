@@ -12,12 +12,14 @@
 
 #include "CrossPointSettings.h"
 #include "SettingsList.h"
+#include "WifiCredentialStore.h"
 #include "calendar/CalendarStore.h"
 #include "calendar/CalendarSync.h"
 #include "html/CalendarPageHtml.generated.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
 #include "html/SettingsPageHtml.generated.h"
+#include "html/WifiPageHtml.generated.h"
 #include "network/HttpDownloader.h"
 #include "secrets.h"
 #include "util/StringUtils.h"
@@ -167,6 +169,12 @@ void CrossPointWebServer::begin() {
   server->on("/settings", HTTP_GET, [this] { handleSettingsPage(); });
   server->on("/api/settings", HTTP_GET, [this] { handleGetSettings(); });
   server->on("/api/settings", HTTP_POST, [this] { handlePostSettings(); });
+
+  // WiFi endpoints
+  server->on("/wifi", HTTP_GET, [this] { handleWifiPage(); });
+  server->on("/api/wifi", HTTP_GET, [this] { handleGetWifi(); });
+  server->on("/api/wifi", HTTP_POST, [this] { handlePostWifi(); });
+  server->on("/api/wifi", HTTP_DELETE, [this] { handleDeleteWifi(); });
 
   server->onNotFound([this] { handleNotFound(); });
   Serial.printf("[%lu] [WEB] [MEM] Free heap after route setup: %d bytes\n", millis(), ESP.getFreeHeap());
@@ -1565,4 +1573,93 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
     default:
       break;
   }
+}
+
+void CrossPointWebServer::handleWifiPage() const {
+  server->send(200, "text/html", WifiPageHtml);
+}
+
+void CrossPointWebServer::handleGetWifi() const {
+  JsonDocument doc;
+
+  const auto& credentials = WIFI_STORE.getCredentials();
+  JsonArray networks = doc["networks"].to<JsonArray>();
+
+  const String currentSSID = WiFi.SSID();
+  for (const auto& cred : credentials) {
+    JsonObject net = networks.add<JsonObject>();
+    net["ssid"] = cred.ssid;
+    net["connected"] = (cred.ssid == currentSSID.c_str());
+    // NOTE: Do NOT send passwords for security
+  }
+
+  doc["maxNetworks"] = WifiCredentialStore::MAX_NETWORKS;
+  doc["currentCount"] = credentials.size();
+
+  String json;
+  serializeJson(doc, json);
+  server->send(200, "application/json", json);
+}
+
+void CrossPointWebServer::handlePostWifi() {
+  if (!server->hasArg("plain")) {
+    server->send(400, "text/plain", "Missing body");
+    return;
+  }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, server->arg("plain")) != DeserializationError::Ok) {
+    server->send(400, "text/plain", "Invalid JSON");
+    return;
+  }
+
+  const char* ssid = doc["ssid"];
+  const char* password = doc["password"];
+
+  if (!ssid || strlen(ssid) == 0) {
+    server->send(400, "text/plain", "SSID required");
+    return;
+  }
+
+  // Check if we're at max networks and this is a new SSID
+  if (WIFI_STORE.getCredentials().size() >= WifiCredentialStore::MAX_NETWORKS &&
+      !WIFI_STORE.findCredential(ssid)) {
+    server->send(400, "text/plain", "Maximum networks reached (8)");
+    return;
+  }
+
+  if (!WIFI_STORE.addCredential(ssid, password ? password : "")) {
+    server->send(500, "text/plain", "Failed to save network");
+    return;
+  }
+
+  Serial.printf("[%lu] [WEB] Added WiFi network: %s\n", millis(), ssid);
+  server->send(200, "text/plain", "OK");
+}
+
+void CrossPointWebServer::handleDeleteWifi() {
+  if (!server->hasArg("plain")) {
+    server->send(400, "text/plain", "Missing body");
+    return;
+  }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, server->arg("plain")) != DeserializationError::Ok) {
+    server->send(400, "text/plain", "Invalid JSON");
+    return;
+  }
+
+  const char* ssid = doc["ssid"];
+  if (!ssid || strlen(ssid) == 0) {
+    server->send(400, "text/plain", "SSID required");
+    return;
+  }
+
+  if (!WIFI_STORE.removeCredential(ssid)) {
+    server->send(404, "text/plain", "Network not found");
+    return;
+  }
+
+  Serial.printf("[%lu] [WEB] Removed WiFi network: %s\n", millis(), ssid);
+  server->send(200, "text/plain", "OK");
 }

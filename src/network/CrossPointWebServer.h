@@ -110,4 +110,10 @@ class CrossPointWebServer {
   void handleSettingsPage() const;
   void handleGetSettings() const;
   void handlePostSettings();
+
+  // WiFi handlers
+  void handleWifiPage() const;
+  void handleGetWifi() const;
+  void handlePostWifi();
+  void handleDeleteWifi();
 };
