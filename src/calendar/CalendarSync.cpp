@@ -63,20 +63,17 @@ std::string buildExternalApiUrl(const std::string& calendarUrl, int pastDays, in
   url += CALENDAR_API_CUSTOM_PATH;
   url += "?url=";
 
-  // URL encode the calendar URL
+  // URL encode the calendar URL - encode more characters for safety
   for (char c : calendarUrl) {
-    if (c == ':') {
-      url += "%3A";
-    } else if (c == '/') {
-      url += "%2F";
-    } else if (c == '?') {
-      url += "%3F";
-    } else if (c == '=') {
-      url += "%3D";
-    } else if (c == '&') {
-      url += "%26";
-    } else {
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+        c == '.' || c == '~') {
+      // Safe characters - don't encode
       url += c;
+    } else {
+      // Encode everything else as %XX
+      char hex[4];
+      snprintf(hex, sizeof(hex), "%%%02X", static_cast<unsigned char>(c));
+      url += hex;
     }
   }
 
@@ -84,6 +81,8 @@ std::string buildExternalApiUrl(const std::string& calendarUrl, int pastDays, in
   url += std::to_string(pastDays);
   url += "&future=";
   url += std::to_string(futureDays);
+
+  Serial.printf("[%lu] [CAL] Built API URL: %s\n", millis(), url.c_str());
 
   return url;
 }
