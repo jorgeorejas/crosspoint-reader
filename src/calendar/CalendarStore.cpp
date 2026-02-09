@@ -51,7 +51,7 @@ bool CalendarStore::loadConfig(CalendarConfig& outConfig) {
   outConfig = CalendarConfig();
 
   FsFile file;
-  if (!SdMan.openFileForRead("CAL", CONFIG_PATH, file)) {
+  if (!Storage.openFileForRead("CAL", CONFIG_PATH, file)) {
     return false;
   }
 
@@ -116,7 +116,7 @@ bool CalendarStore::loadCache(CalendarCache& outCache) {
   outCache = CalendarCache();
 
   FsFile file;
-  if (!SdMan.openFileForRead("CAL", CACHE_PATH, file)) {
+  if (!Storage.openFileForRead("CAL", CACHE_PATH, file)) {
     return false;
   }
 
