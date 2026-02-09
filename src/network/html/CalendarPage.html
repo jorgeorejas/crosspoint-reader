@@ -102,6 +102,7 @@
       <a href="/">Home</a>
       <a href="/files">File Manager</a>
       <a href="/calendar">Calendar</a>
+      <a href="/settings">Settings</a>
     </div>
 
     <div class="card">
@@ -109,6 +110,14 @@
       <div class="row">
         <label for="tzOffset">Timezone Offset (minutes)</label>
         <input id="tzOffset" type="number" value="0" />
+      </div>
+      <div class="row">
+        <label for="pastDays">Past Days (0-30)</label>
+        <input id="pastDays" type="number" value="2" min="0" max="30" />
+      </div>
+      <div class="row">
+        <label for="futureDays">Future Days (0-30)</label>
+        <input id="futureDays" type="number" value="7" min="0" max="30" />
       </div>
       <div class="row">
         <label for="autoSyncOnOpen">Auto-sync on open</label>
@@ -167,6 +176,8 @@
         const res = await fetch('/api/calendars');
         config = await res.json();
         document.getElementById('tzOffset').value = config.timezoneOffsetMinutes || 0;
+        document.getElementById('pastDays').value = config.pastDays || 2;
+        document.getElementById('futureDays').value = config.futureDays || 7;
         document.getElementById('autoSyncOnOpen').checked = config.autoSyncOnOpen !== false;
         document.getElementById('autoSyncHourly').checked = !!config.autoSyncHourly;
         const cache = config.cache || {};
@@ -230,14 +241,29 @@
       async function saveConfig() {
         clearError();
         config.timezoneOffsetMinutes = parseInt(document.getElementById('tzOffset').value || '0', 10);
+        config.pastDays = parseInt(document.getElementById('pastDays').value || '2', 10);
+        config.futureDays = parseInt(document.getElementById('futureDays').value || '7', 10);
         config.autoSyncOnOpen = document.getElementById('autoSyncOnOpen').checked;
         config.autoSyncHourly = document.getElementById('autoSyncHourly').checked;
         config.autoSyncIntervalMinutes = 60;
+
+        // Validate day ranges
+        if (config.pastDays < 0 || config.pastDays > 30) {
+          showError('Past Days must be between 0 and 30');
+          return;
+        }
+        if (config.futureDays < 0 || config.futureDays > 30) {
+          showError('Future Days must be between 0 and 30');
+          return;
+        }
+
         const res = await fetch('/api/calendars', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             timezoneOffsetMinutes: config.timezoneOffsetMinutes,
+            pastDays: config.pastDays,
+            futureDays: config.futureDays,
             autoSyncOnOpen: config.autoSyncOnOpen,
             autoSyncHourly: config.autoSyncHourly,
             autoSyncIntervalMinutes: config.autoSyncIntervalMinutes,

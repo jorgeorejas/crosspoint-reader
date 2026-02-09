@@ -412,6 +412,8 @@ void CrossPointWebServer::handleCalendarGet() const {
   JsonDocument doc;
   doc["version"] = config.version;
   doc["timezoneOffsetMinutes"] = config.timezoneOffsetMinutes;
+  doc["pastDays"] = config.pastDays;
+  doc["futureDays"] = config.futureDays;
   doc["autoSyncOnOpen"] = config.autoSyncOnOpen;
   doc["autoSyncHourly"] = config.autoSyncHourly;
   doc["autoSyncIntervalMinutes"] = config.autoSyncIntervalMinutes;
@@ -453,6 +455,8 @@ void CrossPointWebServer::handleCalendarPost() const {
   }
 
   config.timezoneOffsetMinutes = doc["timezoneOffsetMinutes"] | 0;
+  config.pastDays = doc["pastDays"] | 2;
+  config.futureDays = doc["futureDays"] | 7;
   config.autoSyncOnOpen = doc["autoSyncOnOpen"] | true;
   config.autoSyncHourly = doc["autoSyncHourly"] | false;
   config.autoSyncIntervalMinutes = doc["autoSyncIntervalMinutes"] | 60;
