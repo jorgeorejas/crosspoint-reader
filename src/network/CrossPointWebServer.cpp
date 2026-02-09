@@ -17,6 +17,8 @@
 #include "html/FilesPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
 #include "html/SettingsPageHtml.generated.h"
+#include "network/HttpDownloader.h"
+#include "secrets.h"
 #include "util/StringUtils.h"
 #include "util/TimeUtils.h"
 
@@ -139,6 +141,7 @@ void CrossPointWebServer::begin() {
 
   server->on("/api/status", HTTP_GET, [this] { handleStatus(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
+  server->on("/api/calendar", HTTP_GET, [this] { handleCalendarApi(); });
   server->on("/api/calendars", HTTP_GET, [this] { handleCalendarGet(); });
   server->on("/api/calendars", HTTP_POST, [this] { handleCalendarPost(); });
   server->on("/api/calendars/sync", HTTP_POST, [this] { handleCalendarSync(); });
@@ -516,6 +519,134 @@ void CrossPointWebServer::handleCalendarSync() const {
 
   String json;
   serializeJson(doc, json);
+  server->send(200, "application/json", json);
+}
+
+void CrossPointWebServer::handleCalendarApi() const {
+  // Load calendar configuration
+  CalendarConfig config;
+  if (!CalendarStore::loadConfig(config)) {
+    server->send(400, "application/json", "{\"error\":\"Missing config\"}");
+    return;
+  }
+
+  // Use external calendar API base URL from secrets.h
+  const String apiBaseUrl = CALENDAR_API_BASE_URL;
+
+  // Prepare merged response structure matching the external API format
+  JsonDocument mergedDoc;
+  JsonArray pastArray = mergedDoc["past"].to<JsonArray>();
+  JsonObject todayObj = mergedDoc["today"].to<JsonObject>();
+  JsonArray futureArray = mergedDoc["future"].to<JsonArray>();
+
+  // Helper to merge events by date key
+  std::map<std::string, JsonArray> dayMap;  // date -> events array
+
+  // Fetch from each enabled calendar source
+  for (const auto& entry : config.calendars) {
+    if (!entry.enabled || entry.url.empty()) {
+      continue;
+    }
+
+    // Build external API URL
+    String externalUrl = apiBaseUrl;
+    externalUrl += "/calendar/custom.json?url=";
+
+    // URL encode the calendar URL
+    String encodedUrl = entry.url.c_str();
+    encodedUrl.replace(":", "%3A");
+    encodedUrl.replace("/", "%2F");
+    encodedUrl.replace("?", "%3F");
+    encodedUrl.replace("=", "%3D");
+    encodedUrl.replace("&", "%26");
+
+    externalUrl += encodedUrl;
+    externalUrl += "&past=";
+    externalUrl += String(config.pastDays);
+    externalUrl += "&future=";
+    externalUrl += String(config.futureDays);
+
+    Serial.printf("[%lu] [WEB] Fetching calendar from: %s\n", millis(), externalUrl.c_str());
+
+    // Fetch from external API
+    std::string jsonResponse;
+    if (!HttpDownloader::fetchUrl(externalUrl.c_str(), jsonResponse)) {
+      Serial.printf("[%lu] [WEB] Failed to fetch calendar: %s\n", millis(), entry.id.c_str());
+      continue;
+    }
+
+    // Parse response
+    JsonDocument sourceDoc;
+    if (deserializeJson(sourceDoc, jsonResponse) != DeserializationError::Ok) {
+      Serial.printf("[%lu] [WEB] Failed to parse calendar JSON: %s\n", millis(), entry.id.c_str());
+      continue;
+    }
+
+    // Helper to add calendar_id and tag to events
+    auto enrichEvents = [&](JsonArray events) {
+      for (JsonObject event : events) {
+        event["calendar_id"] = entry.id;
+        event["tag"] = entry.tag;
+      }
+    };
+
+    // Merge past days
+    JsonArray sourcePast = sourceDoc["past"].as<JsonArray>();
+    if (!sourcePast.isNull()) {
+      for (JsonObject day : sourcePast) {
+        JsonArray events = day["events"].as<JsonArray>();
+        if (!events.isNull()) {
+          enrichEvents(events);
+          // Add to merged past array
+          JsonObject mergedDay = pastArray.add<JsonObject>();
+          mergedDay["date"] = day["date"];
+          JsonArray mergedEvents = mergedDay["events"].to<JsonArray>();
+          for (JsonObject event : events) {
+            mergedEvents.add(event);
+          }
+        }
+      }
+    }
+
+    // Merge today
+    JsonObject sourceToday = sourceDoc["today"].as<JsonObject>();
+    if (!sourceToday.isNull()) {
+      JsonArray events = sourceToday["events"].as<JsonArray>();
+      if (!events.isNull()) {
+        enrichEvents(events);
+        if (todayObj.isNull()) {
+          todayObj["date"] = sourceToday["date"];
+          todayObj["events"].to<JsonArray>();
+        }
+        JsonArray todayEvents = todayObj["events"].as<JsonArray>();
+        for (JsonObject event : events) {
+          todayEvents.add(event);
+        }
+      }
+    }
+
+    // Merge future days
+    JsonArray sourceFuture = sourceDoc["future"].as<JsonArray>();
+    if (!sourceFuture.isNull()) {
+      for (JsonObject day : sourceFuture) {
+        JsonArray events = day["events"].as<JsonArray>();
+        if (!events.isNull()) {
+          enrichEvents(events);
+          // Add to merged future array
+          JsonObject mergedDay = futureArray.add<JsonObject>();
+          mergedDay["date"] = day["date"];
+          JsonArray mergedEvents = mergedDay["events"].to<JsonArray>();
+          for (JsonObject event : events) {
+            mergedEvents.add(event);
+          }
+        }
+      }
+    }
+  }
+
+  // Send merged response
+  String json;
+  serializeJson(mergedDoc, json);
   server->send(200, "application/json", json);
 }
 
