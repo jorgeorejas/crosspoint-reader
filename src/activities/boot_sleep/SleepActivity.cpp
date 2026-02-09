@@ -344,7 +344,8 @@ void SleepActivity::renderCalendarSleepScreen() const {
       continue;
     }
 
-    if (ev.startEpoch < windowEnd && ev.endEpoch >= now) {
+    // Include events from today onwards (including past events from today)
+    if (ev.startEpoch >= dayStart && ev.startEpoch < windowEnd) {
       timed.push_back(&ev);
     }
   }
@@ -365,17 +366,23 @@ void SleepActivity::renderCalendarSleepScreen() const {
   if (maxLines < 1) maxLines = 1;
 
   renderer.clearScreen();
-  renderer.drawCenteredText(UI_12_FONT_ID, HEADER_TOP, "Next 24 hours", true, EpdFontFamily::BOLD);
 
-  char dateBuf[32] = {0};
-  strftime(dateBuf, sizeof(dateBuf), "%a %b %d %H:%M", &nowTm);
-  renderer.drawCenteredText(UI_10_FONT_ID, HEADER_TOP + 25, dateBuf, true);
+  // Large date header
+  char dateBuf[64] = {0};
+  strftime(dateBuf, sizeof(dateBuf), "%A, %B %d, %Y", &nowTm);
+  renderer.drawCenteredText(UI_12_FONT_ID, HEADER_TOP, dateBuf, true, EpdFontFamily::BOLD);
+
+  // Optional separator line
+  const int separatorY = HEADER_TOP + 35;
+  renderer.drawLine(LEFT_MARGIN + 60, separatorY, pageWidth - RIGHT_MARGIN - 60, separatorY);
 
   int y = listTop;
   int linesUsed = 0;
   auto drawLine = [&](const std::string& line) {
     if (linesUsed >= maxLines) return;
-    const auto truncated = renderer.truncatedText(UI_10_FONT_ID, line.c_str(), pageWidth - LEFT_MARGIN - RIGHT_MARGIN);
+    // Add bullet point prefix
+    const std::string bulletLine = "• " + line;
+    const auto truncated = renderer.truncatedText(UI_10_FONT_ID, bulletLine.c_str(), pageWidth - LEFT_MARGIN - RIGHT_MARGIN);
     renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, y, truncated.c_str());
     y += lineHeight;
     linesUsed++;
@@ -384,7 +391,7 @@ void SleepActivity::renderCalendarSleepScreen() const {
   for (const auto* ev : allDay) {
     if (linesUsed >= maxLines) break;
     const std::string title = ev->summary.empty() ? "(No title)" : ev->summary;
-    drawLine("All day " + title);
+    drawLine(title + " (All day)");
   }
 
   for (const auto* ev : timed) {
@@ -394,7 +401,7 @@ void SleepActivity::renderCalendarSleepScreen() const {
     char timeBuf[8] = {0};
     strftime(timeBuf, sizeof(timeBuf), "%H:%M", startTm);
     const std::string title = ev->summary.empty() ? "(No title)" : ev->summary;
-    drawLine(std::string(timeBuf) + " " + title);
+    drawLine(std::string(timeBuf) + " - " + title);
   }
 
   renderer.displayBuffer(HalDisplay::HALF_REFRESH);
