@@ -8,7 +8,7 @@
 #include <cctype>
 
 #include "MappedInputManager.h"
-#include "ScreenComponents.h"
+#include "components/UITheme.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "calendar/CalendarStore.h"
 #include "calendar/CalendarSync.h"
@@ -426,8 +426,8 @@ void CalendarActivity::renderBrowsing() const {
   }
 
   const int contentHeight = renderer.getScreenHeight() - CONTENT_TOP - 60;
-  ScreenComponents::drawScrollIndicator(renderer, selectorIndex / pageItems + 1, (itemCount + pageItems - 1) / pageItems,
-                                        CONTENT_TOP, contentHeight);
+  // TODO: Re-implement scroll indicator with new UITheme system
+  // Scroll indicator removed - was: ScreenComponents::drawScrollIndicator
 
   const char* confirmLabel = displayItems.empty() ? "Sync" : "Details";
   const auto labels = mappedInput.mapLabels("Back", confirmLabel, "<", ">");
