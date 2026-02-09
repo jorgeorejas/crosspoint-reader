@@ -52,10 +52,26 @@ time_t parseIso8601(const std::string& isoStr, bool& isAllDay) {
   tmVal.tm_hour = atoi(isoStr.substr(11, 2).c_str());
   tmVal.tm_min = atoi(isoStr.substr(14, 2).c_str());
   tmVal.tm_sec = atoi(isoStr.substr(17, 2).c_str());
+  tmVal.tm_isdst = 0;  // No DST in UTC
 
-  // For now, treat all times as local time
-  // TODO: Handle timezone offsets properly
-  return mktime(&tmVal);
+  // The API returns UTC times (ISO 8601 with Z or +00:00)
+  // We need to parse as UTC, not local time
+  // Temporarily set TZ to UTC, parse, then epoch time is already UTC-based
+  const char* originalTz = getenv("TZ");
+  setenv("TZ", "UTC0", 1);
+  tzset();
+
+  const time_t utcEpoch = mktime(&tmVal);
+
+  // Restore original timezone
+  if (originalTz) {
+    setenv("TZ", originalTz, 1);
+  } else {
+    unsetenv("TZ");
+  }
+  tzset();
+
+  return utcEpoch;
 }
 
 std::string buildExternalApiUrl(const std::string& calendarUrl, int pastDays, int futureDays) {
