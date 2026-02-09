@@ -1593,7 +1593,7 @@ void CrossPointWebServer::handleGetWifi() const {
     // NOTE: Do NOT send passwords for security
   }
 
-  doc["maxNetworks"] = WifiCredentialStore::MAX_NETWORKS;
+  doc["maxNetworks"] = 8;  // WifiCredentialStore::MAX_NETWORKS (private)
   doc["currentCount"] = credentials.size();
 
   String json;
@@ -1622,7 +1622,7 @@ void CrossPointWebServer::handlePostWifi() {
   }
 
   // Check if we're at max networks and this is a new SSID
-  if (WIFI_STORE.getCredentials().size() >= WifiCredentialStore::MAX_NETWORKS &&
+  if (WIFI_STORE.getCredentials().size() >= 8 &&  // WifiCredentialStore::MAX_NETWORKS (private)
       !WIFI_STORE.findCredential(ssid)) {
     server->send(400, "text/plain", "Maximum networks reached (8)");
     return;
