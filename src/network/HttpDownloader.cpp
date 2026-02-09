@@ -28,6 +28,7 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent) {
   Serial.printf("[%lu] [HTTP] Fetching: %s\n", millis(), url.c_str());
 
   http.begin(*client, url.c_str());
+  http.setTimeout(30000);  // 30 second timeout for calendar API calls
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.addHeader("User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
 
@@ -40,7 +41,10 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent) {
 
   const int httpCode = http.GET();
   if (httpCode != HTTP_CODE_OK) {
-    Serial.printf("[%lu] [HTTP] Fetch failed: %d\n", millis(), httpCode);
+    Serial.printf("[%lu] [HTTP] Fetch failed with status: %d\n", millis(), httpCode);
+    if (httpCode > 0) {
+      Serial.printf("[%lu] [HTTP] Response: %s\n", millis(), http.getString().c_str());
+    }
     http.end();
     return false;
   }
