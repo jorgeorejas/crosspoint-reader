@@ -92,6 +92,13 @@ std::string buildExternalApiUrl(const std::string& calendarUrl, int pastDays, in
 CalendarSyncResult CalendarSync::syncCalendars(CalendarConfig& config) {
   CalendarSyncResult result;
 
+  // Check WiFi connection
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.printf("[%lu] [CAL] WiFi not connected, cannot sync\n", millis());
+    result.ok = false;
+    return result;
+  }
+
   TimeUtils::applyTimezoneOffset(config.timezoneOffsetMinutes);
   TimeUtils::syncTimeWithNtp();
 
@@ -100,6 +107,9 @@ CalendarSyncResult CalendarSync::syncCalendars(CalendarConfig& config) {
   const time_t rangeEnd = now + CACHE_DAYS * 24 * 60 * 60;
 
   std::vector<CalendarEvent> allEvents;
+
+  Serial.printf("[%lu] [CAL] Starting sync for %zu calendars (past=%d, future=%d)\n",
+                millis(), config.calendars.size(), config.pastDays, config.futureDays);
 
   // Fetch from each enabled calendar source
   for (auto& entry : config.calendars) {
@@ -128,17 +138,21 @@ CalendarSyncResult CalendarSync::syncCalendars(CalendarConfig& config) {
     // Fetch JSON response from external API
     std::string jsonResponse;
     if (!HttpDownloader::fetchUrl(apiUrl, jsonResponse)) {
+      Serial.printf("[%lu] [CAL] HTTP fetch failed for calendar %s\n", millis(), entry.id.c_str());
       item.ok = false;
       item.message = "fetch failed";
       result.items.push_back(item);
       continue;
     }
 
+    Serial.printf("[%lu] [CAL] Received %zu bytes of JSON for %s\n", millis(), jsonResponse.size(), entry.id.c_str());
+
     // Parse JSON response
     JsonDocument doc;
     const DeserializationError err = deserializeJson(doc, jsonResponse);
     if (err) {
       Serial.printf("[%lu] [CAL] JSON parse error for %s: %s\n", millis(), entry.id.c_str(), err.c_str());
+      Serial.printf("[%lu] [CAL] First 200 chars: %s\n", millis(), jsonResponse.substr(0, 200).c_str());
       item.ok = false;
       item.message = "parse failed";
       result.items.push_back(item);
