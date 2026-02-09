@@ -2,8 +2,8 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <HalStorage.h>
 #include <HardwareSerial.h>
-#include <SDCardManager.h>
 
 
 namespace {
@@ -13,7 +13,7 @@ constexpr char CAL_DIR[] = "/.crosspoint/calendars";
 
 bool readFileToString(const char* path, std::string& out) {
   FsFile file;
-  if (!SdMan.openFileForRead("CAL", path, file)) {
+  if (!Storage.openFileForRead("CAL", path, file)) {
     return false;
   }
   const size_t size = file.size();
@@ -36,9 +36,9 @@ bool readFileToString(const char* path, std::string& out) {
 }
 
 bool writeStringToFile(const char* path, const std::string& data) {
-  SdMan.mkdir("/.crosspoint");
+  Storage.mkdir("/.crosspoint");
   FsFile file;
-  if (!SdMan.openFileForWrite("CAL", path, file)) {
+  if (!Storage.openFileForWrite("CAL", path, file)) {
     return false;
   }
   const size_t written = file.write(reinterpret_cast<const uint8_t*>(data.data()), data.size());

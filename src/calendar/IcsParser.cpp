@@ -1,7 +1,7 @@
 #include "IcsParser.h"
 
+#include <HalStorage.h>
 #include <HardwareSerial.h>
-#include <SDCardManager.h>
 
 #include <algorithm>
 #include <cctype>
@@ -554,7 +554,7 @@ bool IcsParser::parseFile(const std::string& path, const std::string& calendarId
                           int timezoneOffsetMinutes, time_t rangeStartEpoch, time_t rangeEndEpoch,
                           std::vector<CalendarEvent>& outEvents, std::string& error) {
   FsFile file;
-  if (!SdMan.openFileForRead("CAL", path.c_str(), file)) {
+  if (!Storage.openFileForRead("CAL", path.c_str(), file)) {
     error = "Failed to open .ics file";
     return false;
   }
