@@ -79,6 +79,7 @@ static HttpDownloader::DownloadError downloadToFileInternal(const std::string& u
   Serial.printf("[%lu] [HTTP] Destination: %s\n", millis(), destPath.c_str());
 
   http.begin(*client, url.c_str());
+  http.setTimeout(30000);  // 30 second timeout for large calendar files
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.addHeader("User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
 

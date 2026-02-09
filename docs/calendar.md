@@ -1,6 +1,21 @@
-# Calendar (iCal) Support
+# Calendar Support
 
-CrossPoint Reader supports importing iCalendar (`.ics`) feeds and displaying upcoming events on the device.
+CrossPoint Reader supports displaying calendar events by fetching them from a JSON API endpoint that processes iCalendar (`.ics`) feeds.
+
+## API Configuration
+
+The calendar feature uses a backend API to fetch and process calendar events. The API endpoint is configured in `src/secrets.h` (see `src/secrets.h.example` for the template).
+
+The API accepts iCal URLs and returns events in a structured JSON format. For the complete API schema specification, see https://www.jorgeorejas.com/calendar/spec.json
+
+### API Endpoints
+
+- **Default Calendar**: `/calendar.json` - Returns events from a default calendar
+- **Custom Calendar**: `/calendar/custom.json?url=<ics-url>` - Returns events from any iCal URL
+
+Both endpoints support query parameters:
+- `past` (0-30, default: 2): Days before today to include
+- `future` (0-30, default: 2): Days after today to include
 
 ## Getting Your iCal URL
 
@@ -40,51 +55,57 @@ Most calendar applications support iCal export. Look for options like:
 - "Export as ICS"
 - "Calendar URL" or "iCal URL"
 
-## Supported Components
+## Event Data
 
-- **VEVENT** only
-- Other components (VTODO, VJOURNAL, VFREEBUSY, VTIMEZONE, VALARM) are ignored
+The API returns events with the following properties:
 
-## Supported Properties
+- `id`: Unique event identifier
+- `title`: Event summary/title
+- `start`: Start time (ISO 8601 format)
+- `end`: End time (ISO 8601 format)
+- `location`: Event location (optional)
+- `description`: Event description (optional)
+- `url`: Event URL (optional)
+- `isAllDay`: Boolean flag for all-day events
 
-- `DTSTART`, `DTEND`, `DURATION`
-- `SUMMARY`, `LOCATION`, `DESCRIPTION`, `UID`
-- `RRULE`, `RDATE`, `EXDATE`, `RECURRENCE-ID`, `STATUS`
+The backend API handles all iCal parsing, including:
+
+- **VEVENT** components (other components like VTODO, VJOURNAL are ignored)
+- Standard properties: `DTSTART`, `DTEND`, `DURATION`, `SUMMARY`, `LOCATION`, `DESCRIPTION`, `UID`
+- Recurrence: `RRULE`, `RDATE`, `EXDATE`, `RECURRENCE-ID`, `STATUS`
 
 ## Recurrence Support
 
-Supported RRULE fields:
+The backend API supports RRULE fields including:
 
 - `FREQ` (DAILY, WEEKLY, MONTHLY, YEARLY)
-- `INTERVAL`
-- `COUNT`
-- `UNTIL`
+- `INTERVAL`, `COUNT`, `UNTIL`
 - `BYDAY`, `BYMONTHDAY`, `BYMONTH`
 
 Additional recurrence handling:
-
 - `RDATE` adds extra occurrences
 - `EXDATE` removes occurrences
 - `RECURRENCE-ID` overrides individual instances
-- `STATUS:CANCELLED` removes the event or instance
+- `STATUS:CANCELLED` removes events or instances
 
-The parser expands occurrences only within the cached window (currently 30 days) and caps expansion at 1000
-occurrences per event to avoid runaway rules.
+The API expands occurrences within the requested date window (configurable via `past` and `future` parameters).
 
 ## Timezones
 
-- Fixed **device timezone offset** is used for all events.
-- `TZID`/`VTIMEZONE` are ignored.
-- `Z` (UTC) values are converted using the fixed offset.
+- The device uses a fixed timezone offset for all events
+- The API handles timezone conversion and returns times that work with the device's timezone setting
+- `Z` (UTC) values are converted appropriately
 
 ## All-Day Events
 
-Events with `VALUE=DATE` are treated as all-day. `DTEND` for all-day events is treated as an exclusive end date,
-per RFC5545.
+- Events marked as all-day are flagged with `isAllDay: true`
+- All-day events use date-only format (YYYY-MM-DD) for start times
 
-## Limitations
+## Legacy iCal Parser
+
+The firmware still includes `IcsParser` for backward compatibility, but the calendar sync feature now uses the JSON API by default. The old parser supported direct .ics file parsing with the limitations listed below:
 
 - No full timezone support (TZID/VTIMEZONE)
 - No tasks/journals/free-busy/alarms
-- BYDAY ordinals (e.g., `1MO`, `-1FR`) are not interpreted
+- BYDAY ordinals (e.g., `1MO`, `-1FR`) were not interpreted
 

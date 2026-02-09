@@ -292,15 +292,16 @@ void SleepActivity::renderCalendarSleepScreen() const {
 
   CalendarStore::loadConfig(config);
 
-  if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-    CalendarSyncResult syncResult = CalendarSync::syncCalendars(config);
-    if (syncResult.ok) {
-      cache = syncResult.cache;
-      hasCache = true;
-      CalendarStore::saveCache(cache);
-      CalendarStore::saveConfig(config);
-    }
-  }
+  // Auto-sync disabled - only load from cache
+  // if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+  //   CalendarSyncResult syncResult = CalendarSync::syncCalendars(config);
+  //   if (syncResult.ok) {
+  //     cache = syncResult.cache;
+  //     hasCache = true;
+  //     CalendarStore::saveCache(cache);
+  //     CalendarStore::saveConfig(config);
+  //   }
+  // }
 
   if (!hasCache) {
     hasCache = CalendarStore::loadCache(cache);

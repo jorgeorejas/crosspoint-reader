@@ -176,6 +176,7 @@ bool parseDateTimeValue(const std::string& value, const std::map<std::string, st
   if (isUtc) {
     outEpoch = TimeUtils::utcToEpoch(tmVal, timezoneOffsetMinutes);
   } else {
+    // TZID times or local times - use mktime which respects system timezone
     outEpoch = mktime(&tmVal);
   }
   return true;
