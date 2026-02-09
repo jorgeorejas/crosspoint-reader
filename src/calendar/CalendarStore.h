@@ -18,6 +18,8 @@ struct CalendarConfig {
   bool autoSyncOnOpen = true;
   bool autoSyncHourly = false;
   int autoSyncIntervalMinutes = 60;
+  int pastDays = 2;     // Days in the past to fetch (0-30)
+  int futureDays = 7;   // Days in the future to fetch (0-30)
   std::vector<CalendarConfigEntry> calendars;
 };
 
