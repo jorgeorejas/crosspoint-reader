@@ -71,6 +71,8 @@ bool CalendarStore::loadConfig(CalendarConfig& outConfig) {
   outConfig.autoSyncOnOpen = doc["autoSyncOnOpen"] | true;
   outConfig.autoSyncHourly = doc["autoSyncHourly"] | false;
   outConfig.autoSyncIntervalMinutes = doc["autoSyncIntervalMinutes"] | 60;
+  outConfig.pastDays = doc["pastDays"] | 2;
+  outConfig.futureDays = doc["futureDays"] | 7;
 
   const JsonArray calendars = doc["calendars"].as<JsonArray>();
   if (!calendars.isNull()) {
@@ -96,6 +98,8 @@ bool CalendarStore::saveConfig(const CalendarConfig& config) {
   doc["autoSyncOnOpen"] = config.autoSyncOnOpen;
   doc["autoSyncHourly"] = config.autoSyncHourly;
   doc["autoSyncIntervalMinutes"] = config.autoSyncIntervalMinutes;
+  doc["pastDays"] = config.pastDays;
+  doc["futureDays"] = config.futureDays;
 
   JsonArray calendars = doc["calendars"].to<JsonArray>();
   for (const auto& entry : config.calendars) {
