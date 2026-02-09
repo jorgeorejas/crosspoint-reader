@@ -8,6 +8,7 @@
 #include <esp_task_wdt.h>
 
 #include <algorithm>
+#include <map>
 
 #include "CrossPointSettings.h"
 #include "SettingsList.h"
@@ -538,9 +539,6 @@ void CrossPointWebServer::handleCalendarApi() const {
   JsonArray pastArray = mergedDoc["past"].to<JsonArray>();
   JsonObject todayObj = mergedDoc["today"].to<JsonObject>();
   JsonArray futureArray = mergedDoc["future"].to<JsonArray>();
-
-  // Helper to merge events by date key
-  std::map<std::string, JsonArray> dayMap;  // date -> events array
 
   // Fetch from each enabled calendar source
   for (const auto& entry : config.calendars) {
