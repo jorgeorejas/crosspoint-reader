@@ -431,7 +431,7 @@ void CalendarActivity::renderBrowsing() const {
 
   const char* confirmLabel = displayItems.empty() ? "Sync" : "Details";
   const auto labels = mappedInput.mapLabels("Back", confirmLabel, "<", ">");
-  renderer.drawButtonHints(UI_10_FONT_ID, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, renderer.getScreenHeight() - 28, "Hold Confirm: Search");
 }
 
@@ -509,5 +509,5 @@ void CalendarActivity::renderDetail() const {
   }
 
   const auto labels = mappedInput.mapLabels("Back", "", "", "");
-  renderer.drawButtonHints(UI_10_FONT_ID, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
