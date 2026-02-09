@@ -81,6 +81,12 @@ void CalendarActivity::loadCacheAndConfig() {
 }
 
 bool CalendarActivity::matchesFilter(const CalendarEvent& ev) const {
+  // Filter by calendar ID if active
+  if (!activeCalendarFilter.empty() && ev.calendarId != activeCalendarFilter) {
+    return false;
+  }
+
+  // Text filter
   if (filterText.empty()) {
     return true;
   }
@@ -267,6 +273,88 @@ void CalendarActivity::loop() {
     return;
   }
 
+  if (state == State::MENU) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      state = State::BROWSING;
+      updateRequired = true;
+      return;
+    }
+
+    const bool upPressed = mappedInput.wasPressed(MappedInputManager::Button::Up);
+    const bool downPressed = mappedInput.wasPressed(MappedInputManager::Button::Down);
+
+    // Calculate total menu items
+    int totalMenuItems = 1;  // "Show All Calendars"
+    for (const auto& cal : config.calendars) {
+      if (cal.enabled) totalMenuItems++;
+    }
+    totalMenuItems += 3;  // "Sync Now", "Connect WiFi", "Back to Events"
+
+    if (upPressed && menuSelection > 0) {
+      menuSelection--;
+      updateRequired = true;
+    } else if (downPressed && menuSelection < totalMenuItems - 1) {
+      menuSelection++;
+      updateRequired = true;
+    }
+
+    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      // Handle menu selection
+      int currentIndex = 0;
+
+      // "Show All Calendars" option
+      if (menuSelection == currentIndex++) {
+        activeCalendarFilter.clear();
+        buildDisplayItems();
+        state = State::BROWSING;
+        selectorIndex = 0;
+        updateRequired = true;
+        return;
+      }
+
+      // Calendar filter options
+      for (const auto& cal : config.calendars) {
+        if (cal.enabled) {
+          if (menuSelection == currentIndex++) {
+            activeCalendarFilter = cal.id;
+            buildDisplayItems();
+            state = State::BROWSING;
+            selectorIndex = 0;
+            updateRequired = true;
+            return;
+          }
+        }
+      }
+
+      // "Sync Now" option
+      if (menuSelection == currentIndex++) {
+        if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+          state = State::SYNCING;
+          performSync();
+        } else {
+          statusMessage = "Not connected to WiFi";
+          state = State::ERROR;
+        }
+        updateRequired = true;
+        return;
+      }
+
+      // "Connect WiFi" option
+      if (menuSelection == currentIndex++) {
+        launchWifiSelection();
+        return;
+      }
+
+      // "Back to Events" option
+      if (menuSelection == currentIndex++) {
+        state = State::BROWSING;
+        updateRequired = true;
+        return;
+      }
+    }
+    return;
+  }
+
   if (state == State::BROWSING) {
     if (config.autoSyncHourly && WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
       const time_t now = time(nullptr);
@@ -276,7 +364,18 @@ void CalendarActivity::loop() {
       }
     }
 
+    // Long-press Back to open menu
+    if (mappedInput.isPressed(MappedInputManager::Button::Back) &&
+        mappedInput.getHeldTime() >= LONG_PRESS_MS && !backLongPressHandled) {
+      backLongPressHandled = true;
+      state = State::MENU;
+      menuSelection = 0;
+      updateRequired = true;
+      return;
+    }
+
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      backLongPressHandled = false;
       onGoHome();
       return;
     }
@@ -378,6 +477,8 @@ void CalendarActivity::render() const {
     renderBrowsing();
   } else if (state == State::DETAIL) {
     renderDetail();
+  } else if (state == State::MENU) {
+    renderMenu();
   } else {
     renderStatus();
   }
@@ -439,6 +540,45 @@ void CalendarActivity::renderBrowsing() const {
 
   const char* confirmLabel = eventIndices.empty() ? "Sync" : "Details";
   const auto labels = mappedInput.mapLabels("Back", confirmLabel, "<", ">");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+}
+
+void CalendarActivity::renderMenu() const {
+  auto metrics = UITheme::getInstance().getMetrics();
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
+
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+
+  // Build menu items dynamically
+  std::vector<std::string> menuItems = {"Show All Calendars"};
+
+  // Add calendar filter options
+  for (const auto& cal : config.calendars) {
+    if (cal.enabled) {
+      std::string label = "Filter: " + cal.tag;
+      if (activeCalendarFilter == cal.id) {
+        label += " ✓";  // Checkmark for active filter
+      }
+      menuItems.push_back(label);
+    }
+  }
+
+  menuItems.push_back("Sync Now");
+  menuItems.push_back("Connect WiFi");
+  menuItems.push_back("« Back to Events");
+
+  GUI.drawList(
+    renderer,
+    Rect{0, contentTop, pageWidth, contentHeight},
+    menuItems.size(),
+    menuSelection,
+    [&menuItems](int idx) { return menuItems[idx]; },
+    nullptr, nullptr, nullptr
+  );
+
+  const auto labels = mappedInput.mapLabels("Back", "Select", "Up", "Down");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 
