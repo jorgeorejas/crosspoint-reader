@@ -237,6 +237,13 @@ CalendarSyncResult CalendarSync::syncCalendars(CalendarConfig& config) {
   result.cache.rangeEndEpoch = rangeEnd;
   result.cache.events = std::move(allEvents);
 
-  result.ok = true;
+  // Mark sync as successful if we have at least one successful calendar fetch
+  // or if there are no enabled calendars
+  result.ok = !result.items.empty() &&
+              std::any_of(result.items.begin(), result.items.end(),
+                         [](const CalendarSyncItem& item) { return item.ok; });
+
+  Serial.printf("[%lu] [CAL] Sync complete: %zu total events, ok=%d\n", millis(), result.cache.events.size(), result.ok);
+
   return result;
 }

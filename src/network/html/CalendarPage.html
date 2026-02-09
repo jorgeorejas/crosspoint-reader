@@ -71,6 +71,17 @@
         color: #7f8c8d;
         font-weight: 600;
       }
+      .calendar-list input[type="text"] {
+        width: 100%;
+        padding: 4px;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+      }
+      .calendar-list .url-cell {
+        max-width: 300px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       .btn {
         background-color: #27ae60;
         color: white;
@@ -173,20 +184,26 @@
       let config = null;
 
       async function loadConfig() {
-        const res = await fetch('/api/calendars');
-        config = await res.json();
-        document.getElementById('tzOffset').value = config.timezoneOffsetMinutes || 0;
-        document.getElementById('pastDays').value = config.pastDays || 2;
-        document.getElementById('futureDays').value = config.futureDays || 7;
-        document.getElementById('autoSyncOnOpen').checked = config.autoSyncOnOpen !== false;
-        document.getElementById('autoSyncHourly').checked = !!config.autoSyncHourly;
-        const cache = config.cache || {};
-        const count = cache.eventCount || 0;
-        const generated = cache.generatedAtEpoch
-          ? new Date(cache.generatedAtEpoch * 1000).toLocaleString()
-          : 'Never';
-        document.getElementById('cacheStatus').textContent = `Cached events: ${count} (last: ${generated})`;
-        renderCalendars();
+        try {
+          const res = await fetch('/api/calendars');
+          config = await res.json();
+          console.log('Loaded config:', config);
+          document.getElementById('tzOffset').value = config.timezoneOffsetMinutes || 0;
+          document.getElementById('pastDays').value = config.pastDays || 2;
+          document.getElementById('futureDays').value = config.futureDays || 7;
+          document.getElementById('autoSyncOnOpen').checked = config.autoSyncOnOpen !== false;
+          document.getElementById('autoSyncHourly').checked = !!config.autoSyncHourly;
+          const cache = config.cache || {};
+          const count = cache.eventCount || 0;
+          const generated = cache.generatedAtEpoch
+            ? new Date(cache.generatedAtEpoch * 1000).toLocaleString()
+            : 'Never';
+          document.getElementById('cacheStatus').textContent = `Cached events: ${count} (last: ${generated})`;
+          renderCalendars();
+        } catch (err) {
+          console.error('Failed to load config:', err);
+          showError(`Failed to load config: ${err.message}`);
+        }
       }
 
       function renderCalendars() {
@@ -281,14 +298,36 @@
       async function syncNow() {
         clearError();
         document.getElementById('syncStatus').textContent = 'Syncing...';
-        const res = await fetch('/api/calendars/sync', { method: 'POST' });
-        if (!res.ok) {
-          showError(await res.text());
-          return;
+        try {
+          console.log('Starting sync...');
+          const res = await fetch('/api/calendars/sync', { method: 'POST' });
+          const data = await res.json();
+          console.log('Sync response:', data);
+
+          if (!data.ok) {
+            // Show which calendars failed
+            const failed = (data.calendars || []).filter(c => !c.ok);
+            const failedMsg = failed.map(c => `${c.id}: ${c.message}`).join(', ');
+            showError(`Sync failed: ${failedMsg || 'Unknown error'}`);
+            console.error('Sync failed:', data.calendars);
+            return;
+          }
+
+          // Show success with details
+          const succeeded = (data.calendars || []).filter(c => c.ok);
+          const statusParts = [];
+          if (succeeded.length > 0) {
+            statusParts.push(`${succeeded.length} calendar${succeeded.length > 1 ? 's' : ''} synced`);
+          }
+          statusParts.push(`${data.eventCount || 0} events`);
+
+          document.getElementById('syncStatus').textContent = statusParts.join(', ');
+          console.log('Sync successful:', statusParts.join(', '));
+          await loadConfig();
+        } catch (err) {
+          console.error('Sync exception:', err);
+          showError(`Sync error: ${err.message}`);
         }
-        const data = await res.json();
-        document.getElementById('syncStatus').textContent = `Synced ${data.eventCount || 0} events`;
-        await loadConfig();
       }
 
       function showError(message) {

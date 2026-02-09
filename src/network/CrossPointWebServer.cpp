@@ -496,23 +496,22 @@ void CrossPointWebServer::handleCalendarPost() const {
 void CrossPointWebServer::handleCalendarSync() const {
   CalendarConfig config;
   if (!CalendarStore::loadConfig(config)) {
-    server->send(400, "text/plain", "Missing config");
+    server->send(400, "application/json", "{\"ok\":false,\"error\":\"Missing config\"}");
     return;
   }
 
   CalendarSyncResult syncResult = CalendarSync::syncCalendars(config);
-  if (!syncResult.ok) {
-    server->send(500, "text/plain", "Sync failed");
-    return;
-  }
 
+  // Save cache and config even if sync partially failed
   CalendarStore::saveCache(syncResult.cache);
   CalendarStore::saveConfig(config);
 
+  // Build response with detailed results
   JsonDocument doc;
-  doc["ok"] = true;
+  doc["ok"] = syncResult.ok;
   doc["generatedAtEpoch"] = static_cast<int64_t>(syncResult.cache.generatedAtEpoch);
   doc["eventCount"] = static_cast<int>(syncResult.cache.events.size());
+
   JsonArray items = doc["calendars"].to<JsonArray>();
   for (const auto& itemResult : syncResult.items) {
     JsonObject item = items.add<JsonObject>();
@@ -524,6 +523,8 @@ void CrossPointWebServer::handleCalendarSync() const {
 
   String json;
   serializeJson(doc, json);
+
+  // Return 200 with detailed status even if some calendars failed
   server->send(200, "application/json", json);
 }
 
