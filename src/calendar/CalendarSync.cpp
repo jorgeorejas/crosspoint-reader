@@ -8,11 +8,11 @@
 #include <ctime>
 
 #include "network/HttpDownloader.h"
+#include "secrets.h"
 #include "util/TimeUtils.h"
 
 namespace {
 constexpr int CACHE_DAYS = 30;
-constexpr char LOCAL_API_PATH[] = "/api/calendar";
 
 inline time_t nowEpoch() {
   const time_t now = time(nullptr);
@@ -58,16 +58,32 @@ time_t parseIso8601(const std::string& isoStr, bool& isAllDay) {
   return mktime(&tmVal);
 }
 
-std::string buildLocalApiUrl() {
-  // Build URL to local CrossPoint web server
-  const IPAddress localIP = WiFi.localIP();
-  if (localIP == IPAddress(0, 0, 0, 0)) {
-    return "";
+std::string buildExternalApiUrl(const std::string& calendarUrl, int pastDays, int futureDays) {
+  std::string url = CALENDAR_API_BASE_URL;
+  url += CALENDAR_API_CUSTOM_PATH;
+  url += "?url=";
+
+  // URL encode the calendar URL
+  for (char c : calendarUrl) {
+    if (c == ':') {
+      url += "%3A";
+    } else if (c == '/') {
+      url += "%2F";
+    } else if (c == '?') {
+      url += "%3F";
+    } else if (c == '=') {
+      url += "%3D";
+    } else if (c == '&') {
+      url += "%26";
+    } else {
+      url += c;
+    }
   }
 
-  std::string url = "http://";
-  url += localIP.toString().c_str();
-  url += LOCAL_API_PATH;
+  url += "&past=";
+  url += std::to_string(pastDays);
+  url += "&future=";
+  url += std::to_string(futureDays);
 
   return url;
 }
@@ -85,101 +101,128 @@ CalendarSyncResult CalendarSync::syncCalendars(CalendarConfig& config) {
 
   std::vector<CalendarEvent> allEvents;
 
-  // Build URL to local CrossPoint web server API
-  const std::string apiUrl = buildLocalApiUrl();
-  if (apiUrl.empty()) {
-    result.ok = false;
-    return result;
-  }
-
-  Serial.printf("[%lu] [CAL] Fetching calendars from local API: %s\n", millis(), apiUrl.c_str());
-
-  // Fetch JSON response from local API (which merges all calendar sources)
-  std::string jsonResponse;
-  if (!HttpDownloader::fetchUrl(apiUrl, jsonResponse)) {
-    result.ok = false;
-    return result;
-  }
-
-  // Parse JSON response
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, jsonResponse);
-  if (err) {
-    Serial.printf("[%lu] [CAL] JSON parse error: %s\n", millis(), err.c_str());
-    result.ok = false;
-    return result;
-  }
-
-  // Helper lambda to parse events from a day object
-  auto parseDay = [&](const JsonObject& day) {
-    const JsonArray dayEvents = day["events"].as<JsonArray>();
-    if (dayEvents.isNull()) {
-      return;
-    }
-
-    for (const JsonObject& eventObj : dayEvents) {
-      CalendarEvent ev;
-      ev.calendarId = eventObj["calendar_id"] | "";
-      ev.tag = eventObj["tag"] | "";
-      ev.uid = eventObj["id"] | "";
-      ev.summary = eventObj["title"] | "";
-      ev.location = eventObj["location"] | "";
-      ev.description = eventObj["description"] | "";
-
-      // Parse start time
-      bool startAllDay = false;
-      const char* startStr = eventObj["start"];
-      if (startStr) {
-        ev.startEpoch = parseIso8601(startStr, startAllDay);
-      }
-
-      // Parse end time
-      bool endAllDay = false;
-      const char* endStr = eventObj["end"];
-      if (endStr) {
-        ev.endEpoch = parseIso8601(endStr, endAllDay);
-      }
-
-      // Check isAllDay flag from JSON
-      ev.allDay = eventObj["isAllDay"] | false;
-
-      // Validate event has required fields
-      if (!ev.uid.empty() && !ev.summary.empty() && ev.startEpoch > 0) {
-        allEvents.push_back(ev);
-      }
-    }
-  };
-
-  // Parse past days
-  const JsonArray past = doc["past"].as<JsonArray>();
-  if (!past.isNull()) {
-    for (const JsonObject& day : past) {
-      parseDay(day);
-    }
-  }
-
-  // Parse today
-  const JsonObject today = doc["today"].as<JsonObject>();
-  if (!today.isNull()) {
-    parseDay(today);
-  }
-
-  // Parse future days
-  const JsonArray future = doc["future"].as<JsonArray>();
-  if (!future.isNull()) {
-    for (const JsonObject& day : future) {
-      parseDay(day);
-    }
-  }
-
-  // Update last sync time for all enabled calendars
+  // Fetch from each enabled calendar source
   for (auto& entry : config.calendars) {
-    if (entry.enabled) {
-      entry.lastSyncEpoch = now;
-    }
-  }
+    CalendarSyncItem item;
+    item.id = entry.id;
 
-  Serial.printf("[%lu] [CAL] Parsed %zu total events\n", millis(), allEvents.size());
+    if (!entry.enabled) {
+      item.ok = true;
+      item.message = "disabled";
+      result.items.push_back(item);
+      continue;
+    }
+
+    if (entry.url.empty()) {
+      item.ok = false;
+      item.message = "empty url";
+      result.items.push_back(item);
+      continue;
+    }
+
+    // Build external API URL for this calendar
+    const std::string apiUrl = buildExternalApiUrl(entry.url, config.pastDays, config.futureDays);
+
+    Serial.printf("[%lu] [CAL] Fetching calendar %s from: %s\n", millis(), entry.id.c_str(), apiUrl.c_str());
+
+    // Fetch JSON response from external API
+    std::string jsonResponse;
+    if (!HttpDownloader::fetchUrl(apiUrl, jsonResponse)) {
+      item.ok = false;
+      item.message = "fetch failed";
+      result.items.push_back(item);
+      continue;
+    }
+
+    // Parse JSON response
+    JsonDocument doc;
+    const DeserializationError err = deserializeJson(doc, jsonResponse);
+    if (err) {
+      Serial.printf("[%lu] [CAL] JSON parse error for %s: %s\n", millis(), entry.id.c_str(), err.c_str());
+      item.ok = false;
+      item.message = "parse failed";
+      result.items.push_back(item);
+      continue;
+    }
+
+    // Helper lambda to parse events from a day object
+    auto parseDay = [&](const JsonObject& day, std::vector<CalendarEvent>& events) {
+      const JsonArray dayEvents = day["events"].as<JsonArray>();
+      if (dayEvents.isNull()) {
+        return;
+      }
+
+      for (const JsonObject& eventObj : dayEvents) {
+        CalendarEvent ev;
+        ev.calendarId = entry.id;
+        ev.tag = entry.tag;
+        ev.uid = eventObj["id"] | "";
+        ev.summary = eventObj["title"] | "";
+        ev.location = eventObj["location"] | "";
+        ev.description = eventObj["description"] | "";
+
+        // Parse start time
+        bool startAllDay = false;
+        const char* startStr = eventObj["start"];
+        if (startStr) {
+          ev.startEpoch = parseIso8601(startStr, startAllDay);
+        }
+
+        // Parse end time
+        bool endAllDay = false;
+        const char* endStr = eventObj["end"];
+        if (endStr) {
+          ev.endEpoch = parseIso8601(endStr, endAllDay);
+        }
+
+        // Check isAllDay flag from JSON
+        ev.allDay = eventObj["isAllDay"] | false;
+
+        // Validate event has required fields and is in range
+        if (!ev.uid.empty() && !ev.summary.empty() && ev.startEpoch > 0) {
+          if (ev.endEpoch >= rangeStart && ev.startEpoch <= rangeEnd) {
+            events.push_back(ev);
+          }
+        }
+      }
+    };
+
+    std::vector<CalendarEvent> calendarEvents;
+
+    // Parse past days
+    const JsonArray past = doc["past"].as<JsonArray>();
+    if (!past.isNull()) {
+      for (const JsonObject& day : past) {
+        parseDay(day, calendarEvents);
+      }
+    }
+
+    // Parse today
+    const JsonObject today = doc["today"].as<JsonObject>();
+    if (!today.isNull()) {
+      parseDay(today, calendarEvents);
+    }
+
+    // Parse future days
+    const JsonArray future = doc["future"].as<JsonArray>();
+    if (!future.isNull()) {
+      for (const JsonObject& day : future) {
+        parseDay(day, calendarEvents);
+      }
+    }
+
+    // Add this calendar's events to the all events list
+    allEvents.insert(allEvents.end(), calendarEvents.begin(), calendarEvents.end());
+
+    // Update sync status for this calendar
+    entry.lastSyncEpoch = now;
+    item.ok = true;
+    item.eventCount = calendarEvents.size();
+    item.message = "ok";
+    result.items.push_back(item);
+
+    Serial.printf("[%lu] [CAL] Parsed %zu events from calendar %s\n", millis(), calendarEvents.size(), entry.id.c_str());
+  }
 
   std::sort(allEvents.begin(), allEvents.end(), [](const CalendarEvent& a, const CalendarEvent& b) {
     if (a.startEpoch == b.startEpoch) {
