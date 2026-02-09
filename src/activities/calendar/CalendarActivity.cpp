@@ -368,7 +368,11 @@ void CalendarActivity::displayTaskLoop() {
 void CalendarActivity::render() const {
   renderer.clearScreen();
 
-  renderer.drawCenteredText(UI_12_FONT_ID, 15, "Calendar", true, EpdFontFamily::BOLD);
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
+  auto metrics = UITheme::getInstance().getMetrics();
+
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Calendar");
 
   if (state == State::BROWSING) {
     renderBrowsing();
@@ -382,70 +386,79 @@ void CalendarActivity::render() const {
 }
 
 void CalendarActivity::renderStatus() const {
+  auto metrics = UITheme::getInstance().getMetrics();
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+
   const std::string message = (state == State::ERROR && !errorMessage.empty()) ? errorMessage : statusMessage;
-  renderer.drawCenteredText(UI_10_FONT_ID, renderer.getScreenHeight() / 2, message.c_str(), true);
+  renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, message.c_str());
+
+  const auto labels = mappedInput.mapLabels("Back", "Retry", "", "");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 
 void CalendarActivity::renderBrowsing() const {
   const auto pageWidth = renderer.getScreenWidth();
-  const int itemCount = static_cast<int>(displayItems.size());
-  int pageItems = (renderer.getScreenHeight() - CONTENT_TOP - 60) / LINE_HEIGHT;
-  if (pageItems < 1) pageItems = 1;
+  const auto pageHeight = renderer.getScreenHeight();
+  auto metrics = UITheme::getInstance().getMetrics();
 
-  if (itemCount == 0) {
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+
+  // Filter to only event items (skip headers for GUI.drawList)
+  std::vector<int> eventIndices;
+  for (int i = 0; i < static_cast<int>(displayItems.size()); i++) {
+    if (!displayItems[i].isHeader) {
+      eventIndices.push_back(i);
+    }
+  }
+
+  if (eventIndices.empty()) {
     const std::string emptyText = filterText.empty() ? "No events found" : "No matching events";
-    renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, CONTENT_TOP, emptyText.c_str());
-    renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, CONTENT_TOP + 30, statusMessage.c_str());
-    return;
-  }
-
-  if (!filterText.empty()) {
-    const std::string filterLabel = "Filter: " + filterText;
-    auto truncated = renderer.truncatedText(UI_10_FONT_ID, filterLabel.c_str(), pageWidth - LEFT_MARGIN - RIGHT_MARGIN);
-    renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, CONTENT_TOP - 25, truncated.c_str());
-  }
-
-  const int pageStartIndex = selectorIndex / pageItems * pageItems;
-  const int displayCount = std::min(pageItems, itemCount - pageStartIndex);
-
-  for (int i = 0; i < displayCount; i++) {
-    const int index = pageStartIndex + i;
-    const auto& item = displayItems[index];
-    const int y = CONTENT_TOP + i * LINE_HEIGHT;
-
-    if (index == selectorIndex && !item.isHeader) {
-      renderer.fillRect(0, y - 2, pageWidth - RIGHT_MARGIN, LINE_HEIGHT);
+    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, emptyText.c_str());
+    if (!statusMessage.empty()) {
+      renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 50, statusMessage.c_str());
+    }
+  } else {
+    // Find selected event index in filtered list
+    int selectedEventIndex = 0;
+    for (size_t i = 0; i < eventIndices.size(); i++) {
+      if (eventIndices[i] == selectorIndex) {
+        selectedEventIndex = i;
+        break;
+      }
     }
 
-    if (item.isHeader) {
-      renderer.drawText(UI_12_FONT_ID, LEFT_MARGIN, y, item.text.c_str());
-    } else {
-      auto truncated = renderer.truncatedText(UI_10_FONT_ID, item.text.c_str(), pageWidth - LEFT_MARGIN - RIGHT_MARGIN);
-      renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, y, truncated.c_str(), index != selectorIndex);
-    }
+    GUI.drawList(
+        renderer, Rect{0, contentTop, pageWidth, contentHeight}, eventIndices.size(), selectedEventIndex,
+        [this, &eventIndices](int index) { return displayItems[eventIndices[index]].text; },
+        nullptr,  // No subtitle
+        nullptr,  // No icon
+        nullptr   // No value
+    );
   }
 
-  const int contentHeight = renderer.getScreenHeight() - CONTENT_TOP - 60;
-  // TODO: Re-implement scroll indicator with new UITheme system
-  // Scroll indicator removed - was: ScreenComponents::drawScrollIndicator
-
-  const char* confirmLabel = displayItems.empty() ? "Sync" : "Details";
+  const char* confirmLabel = eventIndices.empty() ? "Sync" : "Details";
   const auto labels = mappedInput.mapLabels("Back", confirmLabel, "<", ">");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-  renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, renderer.getScreenHeight() - 28, "Hold Confirm: Search");
 }
 
 void CalendarActivity::renderDetail() const {
-  renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, CONTENT_TOP - 20, "Event Details");
+  auto metrics = UITheme::getInstance().getMetrics();
+  const auto pageWidth = renderer.getScreenWidth();
+
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+
   if (!detailEvent) {
-    renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, CONTENT_TOP, "No event selected");
+    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop, "No event selected");
+    const auto labels = mappedInput.mapLabels("Back", "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     return;
   }
 
-  const int maxWidth = renderer.getScreenWidth() - LEFT_MARGIN - RIGHT_MARGIN;
-  int y = CONTENT_TOP;
+  const int maxWidth = pageWidth - metrics.contentSidePadding * 2;
+  int y = contentTop;
 
-  auto drawWrapped = [&](const char* label, const std::string& value) {
+  auto drawWrapped = [&, maxWidth](const char* label, const std::string& value) {
     if (value.empty()) {
       return;
     }
@@ -466,7 +479,7 @@ void CalendarActivity::renderDetail() const {
         }
         segment = segment.substr(0, cut);
       }
-      renderer.drawText(UI_10_FONT_ID, LEFT_MARGIN, y, segment.c_str());
+      renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, y, segment.c_str());
       y += LINE_HEIGHT;
       pos += segment.size();
       // Skip spaces at break point
