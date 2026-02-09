@@ -226,7 +226,20 @@ void CalendarActivity::performSync() {
   CalendarSyncResult syncResult = CalendarSync::syncCalendars(config);
   if (!syncResult.ok) {
     state = State::ERROR;
-    errorMessage = "Sync failed";
+
+    // Build detailed error message from sync items
+    errorMessage = "Sync failed: ";
+    for (const auto& item : syncResult.items) {
+      if (!item.ok) {
+        errorMessage += item.id + ": " + item.message + " ";
+      }
+    }
+
+    if (syncResult.items.empty()) {
+      errorMessage = "Sync failed: No calendars configured";
+    }
+
+    Serial.printf("[%lu] [CAL] Sync failed: %s\n", millis(), errorMessage.c_str());
     updateRequired = true;
     return;
   }
@@ -238,7 +251,8 @@ void CalendarActivity::performSync() {
   buildDisplayItems();
 
   state = State::BROWSING;
-  statusMessage = "Synced";
+  statusMessage = "Synced " + std::to_string(cache.events.size()) + " events";
+  Serial.printf("[%lu] [CAL] Sync success: %zu events\n", millis(), cache.events.size());
   updateRequired = true;
 }
 
@@ -249,10 +263,25 @@ void CalendarActivity::loop() {
   }
 
   if (state == State::ERROR) {
+    // Long-press Back to open menu even from error state
+    if (mappedInput.isPressed(MappedInputManager::Button::Back) &&
+        mappedInput.getHeldTime() >= LONG_PRESS_MS && !backLongPressHandled) {
+      backLongPressHandled = true;
+      state = State::MENU;
+      menuSelection = 0;
+      updateRequired = true;
+      return;
+    }
+
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      backLongPressHandled = false;
       checkAndConnectWifi();
     } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-      onGoHome();
+      backLongPressHandled = false;
+      // Go back to browsing (show cached events even if sync failed)
+      state = State::BROWSING;
+      errorMessage.clear();
+      updateRequired = true;
     }
     return;
   }
@@ -302,8 +331,11 @@ void CalendarActivity::loop() {
       // Handle menu selection
       int currentIndex = 0;
 
+      Serial.printf("[%lu] [CAL] Menu selection: %d\n", millis(), menuSelection);
+
       // "Show All Calendars" option
       if (menuSelection == currentIndex++) {
+        Serial.println("[CAL] Menu: Clear filter");
         activeCalendarFilter.clear();
         buildDisplayItems();
         state = State::BROWSING;
@@ -316,6 +348,7 @@ void CalendarActivity::loop() {
       for (const auto& cal : config.calendars) {
         if (cal.enabled) {
           if (menuSelection == currentIndex++) {
+            Serial.printf("[CAL] Menu: Filter by %s\n", cal.id.c_str());
             activeCalendarFilter = cal.id;
             buildDisplayItems();
             state = State::BROWSING;
@@ -328,25 +361,31 @@ void CalendarActivity::loop() {
 
       // "Sync Now" option
       if (menuSelection == currentIndex++) {
-        if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-          state = State::SYNCING;
+        Serial.println("[CAL] Menu: Sync Now");
+        const bool wifiConnected = WiFi.status() == WL_CONNECTED;
+        const bool hasIP = WiFi.localIP() != IPAddress(0, 0, 0, 0);
+        Serial.printf("[CAL] WiFi connected: %d, has IP: %d\n", wifiConnected, hasIP);
+
+        if (wifiConnected && hasIP) {
           performSync();
         } else {
-          statusMessage = "Not connected to WiFi";
+          errorMessage = "Not connected to WiFi";
           state = State::ERROR;
+          updateRequired = true;
         }
-        updateRequired = true;
         return;
       }
 
       // "Connect WiFi" option
       if (menuSelection == currentIndex++) {
+        Serial.println("[CAL] Menu: Connect WiFi");
         launchWifiSelection();
         return;
       }
 
       // "Back to Events" option
       if (menuSelection == currentIndex++) {
+        Serial.println("[CAL] Menu: Back to Events");
         state = State::BROWSING;
         updateRequired = true;
         return;
@@ -489,11 +528,37 @@ void CalendarActivity::render() const {
 void CalendarActivity::renderStatus() const {
   auto metrics = UITheme::getInstance().getMetrics();
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const auto pageHeight = renderer.getScreenHeight();
 
   const std::string message = (state == State::ERROR && !errorMessage.empty()) ? errorMessage : statusMessage;
-  renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, message.c_str());
 
-  const auto labels = mappedInput.mapLabels("Back", "Retry", "", "");
+  // Word wrap the error message
+  std::string remaining = message;
+  int y = contentTop + 20;
+  const int maxWidth = renderer.getScreenWidth() - metrics.contentSidePadding * 2;
+
+  while (!remaining.empty() && y < pageHeight - 100) {
+    std::string line = remaining;
+    while (renderer.getTextWidth(UI_10_FONT_ID, line.c_str()) > maxWidth && line.size() > 1) {
+      size_t lastSpace = line.find_last_of(' ');
+      if (lastSpace == std::string::npos || lastSpace == 0) break;
+      line = line.substr(0, lastSpace);
+    }
+
+    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, y, line.c_str());
+    y += 30;
+
+    if (line.size() >= remaining.size()) break;
+    remaining = remaining.substr(line.size());
+    while (!remaining.empty() && remaining[0] == ' ') remaining = remaining.substr(1);
+  }
+
+  // Show helpful hint
+  if (state == State::ERROR) {
+    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, y + 20, "Hold Back: Menu");
+  }
+
+  const auto labels = mappedInput.mapLabels("« Browse", "Retry", "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 
