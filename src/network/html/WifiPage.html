@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CrossPoint Reader - WiFi Networks</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Oxygen, Ubuntu, sans-serif;
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: #f5f5f5;
+        color: #333;
+      }
+      h1 {
+        color: #2c3e50;
+        margin-bottom: 5px;
+      }
+      .card {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        margin: 15px 0;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      .nav-links {
+        margin: 20px 0;
+      }
+      .nav-links a {
+        display: inline-block;
+        padding: 10px 20px;
+        background-color: #3498db;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+        margin-right: 10px;
+      }
+      .nav-links a:hover {
+        background-color: #2980b9;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .row input[type="text"],
+      .row input[type="password"] {
+        flex: 1;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+      .row label {
+        min-width: 100px;
+        font-weight: 600;
+      }
+      .wifi-list {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .wifi-list th,
+      .wifi-list td {
+        padding: 12px 8px;
+        border-bottom: 1px solid #eee;
+        text-align: left;
+      }
+      .wifi-list th {
+        color: #7f8c8d;
+        font-weight: 600;
+        background-color: #f8f9fa;
+      }
+      .wifi-list .ssid-cell {
+        font-weight: 500;
+      }
+      .wifi-list .status-connected {
+        color: #27ae60;
+        font-weight: 600;
+      }
+      .wifi-list .status-saved {
+        color: #7f8c8d;
+      }
+      .btn {
+        background-color: #27ae60;
+        color: white;
+        padding: 10px 16px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .btn:hover {
+        background-color: #229954;
+      }
+      .btn.danger {
+        background-color: #e74c3c;
+        padding: 8px 12px;
+        font-size: 0.9em;
+      }
+      .btn.danger:hover {
+        background-color: #c0392b;
+      }
+      .status {
+        font-size: 0.9em;
+        color: #7f8c8d;
+        margin-top: 10px;
+      }
+      .error {
+        color: #e74c3c;
+        font-weight: 600;
+        margin-top: 10px;
+      }
+      .empty-state {
+        text-align: center;
+        padding: 40px 20px;
+        color: #95a5a6;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>📡 WiFi Networks</h1>
+
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/files">File Manager</a>
+      <a href="/calendar">Calendar</a>
+      <a href="/wifi">WiFi</a>
+      <a href="/settings">Settings</a>
+    </div>
+
+    <div class="card">
+      <h2>Saved Networks</h2>
+      <div id="networkCount" class="status"></div>
+      <table class="wifi-list" id="wifiTable">
+        <thead>
+          <tr>
+            <th>SSID</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td colspan="3" class="empty-state">Loading...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Add Network</h2>
+      <div class="row">
+        <label for="newSsid">SSID</label>
+        <input id="newSsid" type="text" placeholder="Network Name" maxlength="32" />
+      </div>
+      <div class="row">
+        <label for="newPassword">Password</label>
+        <input id="newPassword" type="password" placeholder="WiFi Password" maxlength="64" />
+      </div>
+      <div class="row">
+        <button class="btn" onclick="addNetwork()">Add Network</button>
+      </div>
+      <div id="error" class="error"></div>
+    </div>
+
+    <script>
+      let networksData = null;
+
+      async function loadNetworks() {
+        try {
+          const res = await fetch('/api/wifi');
+          if (!res.ok) {
+            showError('Failed to load networks');
+            return;
+          }
+          networksData = await res.json();
+          renderNetworks();
+        } catch (err) {
+          showError('Error loading networks: ' + err.message);
+        }
+      }
+
+      function renderNetworks() {
+        const tbody = document.getElementById('wifiTable').querySelector('tbody');
+        tbody.innerHTML = '';
+
+        const networks = networksData.networks || [];
+        const maxNetworks = networksData.maxNetworks || 8;
+        const currentCount = networksData.currentCount || 0;
+
+        document.getElementById('networkCount').textContent =
+          `${currentCount} / ${maxNetworks} networks saved`;
+
+        if (networks.length === 0) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = '<td colspan="3" class="empty-state">No saved networks</td>';
+          tbody.appendChild(tr);
+          return;
+        }
+
+        networks.forEach((net) => {
+          const tr = document.createElement('tr');
+          const statusClass = net.connected ? 'status-connected' : 'status-saved';
+          const statusText = net.connected ? 'Connected' : 'Saved';
+
+          tr.innerHTML = `
+            <td class="ssid-cell">${escapeHtml(net.ssid)}</td>
+            <td class="${statusClass}">${statusText}</td>
+            <td><button class="btn danger" onclick="removeNetwork('${escapeHtml(net.ssid)}')">Remove</button></td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      async function addNetwork() {
+        clearError();
+        const ssid = document.getElementById('newSsid').value.trim();
+        const password = document.getElementById('newPassword').value;
+
+        if (!ssid) {
+          showError('SSID is required');
+          return;
+        }
+
+        if (networksData && networksData.currentCount >= networksData.maxNetworks) {
+          const exists = networksData.networks.some(n => n.ssid === ssid);
+          if (!exists) {
+            showError('Maximum networks reached (8). Remove a network first.');
+            return;
+          }
+        }
+
+        try {
+          const res = await fetch('/api/wifi', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ssid, password })
+          });
+
+          if (!res.ok) {
+            const errorText = await res.text();
+            showError(errorText || 'Failed to add network');
+            return;
+          }
+
+          document.getElementById('newSsid').value = '';
+          document.getElementById('newPassword').value = '';
+          await loadNetworks();
+        } catch (err) {
+          showError('Error adding network: ' + err.message);
+        }
+      }
+
+      async function removeNetwork(ssid) {
+        if (!confirm(`Remove network "${ssid}"?`)) return;
+
+        clearError();
+
+        try {
+          const res = await fetch('/api/wifi', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ssid })
+          });
+
+          if (!res.ok) {
+            const errorText = await res.text();
+            showError(errorText || 'Failed to remove network');
+            return;
+          }
+
+          await loadNetworks();
+        } catch (err) {
+          showError('Error removing network: ' + err.message);
+        }
+      }
+
+      function showError(message) {
+        document.getElementById('error').textContent = message;
+      }
+
+      function clearError() {
+        document.getElementById('error').textContent = '';
+      }
+
+      function escapeHtml(text) {
+        return text
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      }
+
+      loadNetworks();
+    </script>
+  </body>
+</html>

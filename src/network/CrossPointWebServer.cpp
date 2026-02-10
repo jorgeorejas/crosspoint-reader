@@ -8,13 +8,22 @@
 #include <esp_task_wdt.h>
 
 #include <algorithm>
+#include <map>
 
 #include "CrossPointSettings.h"
 #include "SettingsList.h"
+#include "WifiCredentialStore.h"
+#include "calendar/CalendarStore.h"
+#include "calendar/CalendarSync.h"
+#include "html/CalendarPageHtml.generated.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
 #include "html/SettingsPageHtml.generated.h"
+#include "html/WifiPageHtml.generated.h"
+#include "network/HttpDownloader.h"
+#include "secrets.h"
 #include "util/StringUtils.h"
+#include "util/TimeUtils.h"
 
 namespace {
 // Folders/files to hide from the web interface file browser
@@ -131,9 +140,14 @@ void CrossPointWebServer::begin() {
   Serial.printf("[%lu] [WEB] Setting up routes...\n", millis());
   server->on("/", HTTP_GET, [this] { handleRoot(); });
   server->on("/files", HTTP_GET, [this] { handleFileList(); });
+  server->on("/calendar", HTTP_GET, [this] { handleCalendarPage(); });
 
   server->on("/api/status", HTTP_GET, [this] { handleStatus(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
+  server->on("/api/calendar", HTTP_GET, [this] { handleCalendarApi(); });
+  server->on("/api/calendars", HTTP_GET, [this] { handleCalendarGet(); });
+  server->on("/api/calendars", HTTP_POST, [this] { handleCalendarPost(); });
+  server->on("/api/calendars/sync", HTTP_POST, [this] { handleCalendarSync(); });
   server->on("/download", HTTP_GET, [this] { handleDownload(); });
 
   // Upload endpoint with special handling for multipart form data
@@ -155,6 +169,12 @@ void CrossPointWebServer::begin() {
   server->on("/settings", HTTP_GET, [this] { handleSettingsPage(); });
   server->on("/api/settings", HTTP_GET, [this] { handleGetSettings(); });
   server->on("/api/settings", HTTP_POST, [this] { handlePostSettings(); });
+
+  // WiFi endpoints
+  server->on("/wifi", HTTP_GET, [this] { handleWifiPage(); });
+  server->on("/api/wifi", HTTP_GET, [this] { handleGetWifi(); });
+  server->on("/api/wifi", HTTP_POST, [this] { handlePostWifi(); });
+  server->on("/api/wifi", HTTP_DELETE, [this] { handleDeleteWifi(); });
 
   server->onNotFound([this] { handleNotFound(); });
   Serial.printf("[%lu] [WEB] [MEM] Free heap after route setup: %d bytes\n", millis(), ESP.getFreeHeap());
@@ -388,6 +408,258 @@ bool CrossPointWebServer::isEpubFile(const String& filename) const {
 }
 
 void CrossPointWebServer::handleFileList() const { server->send(200, "text/html", FilesPageHtml); }
+
+void CrossPointWebServer::handleCalendarPage() const { server->send(200, "text/html", CalendarPageHtml); }
+
+void CrossPointWebServer::handleCalendarGet() const {
+  CalendarConfig config;
+  CalendarCache cache;
+  CalendarStore::loadConfig(config);
+  CalendarStore::loadCache(cache);
+
+  JsonDocument doc;
+  doc["version"] = config.version;
+  doc["timezoneOffsetMinutes"] = config.timezoneOffsetMinutes;
+  doc["pastDays"] = config.pastDays;
+  doc["futureDays"] = config.futureDays;
+  doc["autoSyncOnOpen"] = config.autoSyncOnOpen;
+  doc["autoSyncHourly"] = config.autoSyncHourly;
+  doc["autoSyncIntervalMinutes"] = config.autoSyncIntervalMinutes;
+  JsonArray calendars = doc["calendars"].to<JsonArray>();
+  for (const auto& entry : config.calendars) {
+    JsonObject item = calendars.add<JsonObject>();
+    item["id"] = entry.id;
+    item["url"] = entry.url;
+    item["tag"] = entry.tag;
+    item["enabled"] = entry.enabled;
+    item["lastSyncEpoch"] = static_cast<int64_t>(entry.lastSyncEpoch);
+  }
+
+  JsonObject cacheMeta = doc["cache"].to<JsonObject>();
+  cacheMeta["generatedAtEpoch"] = static_cast<int64_t>(cache.generatedAtEpoch);
+  cacheMeta["rangeStartEpoch"] = static_cast<int64_t>(cache.rangeStartEpoch);
+  cacheMeta["rangeEndEpoch"] = static_cast<int64_t>(cache.rangeEndEpoch);
+  cacheMeta["eventCount"] = static_cast<int>(cache.events.size());
+
+  String json;
+  serializeJson(doc, json);
+  server->send(200, "application/json", json);
+}
+
+void CrossPointWebServer::handleCalendarPost() const {
+  if (!server->hasArg("plain")) {
+    server->send(400, "text/plain", "Missing body");
+    return;
+  }
+
+  CalendarConfig config;
+  config.version = 1;
+
+  JsonDocument doc;
+  const auto err = deserializeJson(doc, server->arg("plain"));
+  if (err) {
+    server->send(400, "text/plain", "Invalid JSON");
+    return;
+  }
+
+  config.timezoneOffsetMinutes = doc["timezoneOffsetMinutes"] | 0;
+  config.pastDays = doc["pastDays"] | 2;
+  config.futureDays = doc["futureDays"] | 7;
+  config.autoSyncOnOpen = doc["autoSyncOnOpen"] | true;
+  config.autoSyncHourly = doc["autoSyncHourly"] | false;
+  config.autoSyncIntervalMinutes = doc["autoSyncIntervalMinutes"] | 60;
+  const JsonArray calendars = doc["calendars"].as<JsonArray>();
+  if (calendars.isNull()) {
+    server->send(400, "text/plain", "Missing calendars");
+    return;
+  }
+
+  for (const JsonObject item : calendars) {
+    CalendarConfigEntry entry;
+    entry.id = item["id"] | "";
+    entry.url = item["url"] | "";
+    entry.tag = item["tag"] | "";
+    entry.enabled = item["enabled"] | true;
+    entry.lastSyncEpoch = item["lastSyncEpoch"] | 0;
+    if (entry.id.empty()) {
+      entry.id = CalendarStore::nextId(config);
+    }
+    config.calendars.push_back(entry);
+  }
+
+  std::string error;
+  if (!CalendarStore::validateConfig(config, error)) {
+    server->send(400, "text/plain", error.c_str());
+    return;
+  }
+
+  if (!CalendarStore::saveConfig(config)) {
+    server->send(500, "text/plain", "Failed to save config");
+    return;
+  }
+
+  server->send(200, "text/plain", "OK");
+}
+
+void CrossPointWebServer::handleCalendarSync() const {
+  CalendarConfig config;
+  if (!CalendarStore::loadConfig(config)) {
+    server->send(400, "application/json", "{\"ok\":false,\"error\":\"Missing config\"}");
+    return;
+  }
+
+  CalendarSyncResult syncResult = CalendarSync::syncCalendars(config);
+
+  // Save cache and config even if sync partially failed
+  CalendarStore::saveCache(syncResult.cache);
+  CalendarStore::saveConfig(config);
+
+  // Build response with detailed results
+  JsonDocument doc;
+  doc["ok"] = syncResult.ok;
+  doc["generatedAtEpoch"] = static_cast<int64_t>(syncResult.cache.generatedAtEpoch);
+  doc["eventCount"] = static_cast<int>(syncResult.cache.events.size());
+
+  JsonArray items = doc["calendars"].to<JsonArray>();
+  for (const auto& itemResult : syncResult.items) {
+    JsonObject item = items.add<JsonObject>();
+    item["id"] = itemResult.id;
+    item["ok"] = itemResult.ok;
+    item["message"] = itemResult.message;
+    item["eventCount"] = static_cast<int>(itemResult.eventCount);
+  }
+
+  String json;
+  serializeJson(doc, json);
+
+  // Return 200 with detailed status even if some calendars failed
+  server->send(200, "application/json", json);
+}
+
+void CrossPointWebServer::handleCalendarApi() const {
+  // Load calendar configuration
+  CalendarConfig config;
+  if (!CalendarStore::loadConfig(config)) {
+    server->send(400, "application/json", "{\"error\":\"Missing config\"}");
+    return;
+  }
+
+  // Use external calendar API base URL from secrets.h
+  const String apiBaseUrl = CALENDAR_API_BASE_URL;
+
+  // Prepare merged response structure matching the external API format
+  JsonDocument mergedDoc;
+  JsonArray pastArray = mergedDoc["past"].to<JsonArray>();
+  JsonObject todayObj = mergedDoc["today"].to<JsonObject>();
+  JsonArray futureArray = mergedDoc["future"].to<JsonArray>();
+
+  // Fetch from each enabled calendar source
+  for (const auto& entry : config.calendars) {
+    if (!entry.enabled || entry.url.empty()) {
+      continue;
+    }
+
+    // Build external API URL
+    String externalUrl = apiBaseUrl;
+    externalUrl += "/calendar/custom.json?url=";
+
+    // URL encode the calendar URL
+    String encodedUrl = entry.url.c_str();
+    encodedUrl.replace(":", "%3A");
+    encodedUrl.replace("/", "%2F");
+    encodedUrl.replace("?", "%3F");
+    encodedUrl.replace("=", "%3D");
+    encodedUrl.replace("&", "%26");
+
+    externalUrl += encodedUrl;
+    externalUrl += "&past=";
+    externalUrl += String(config.pastDays);
+    externalUrl += "&future=";
+    externalUrl += String(config.futureDays);
+
+    Serial.printf("[%lu] [WEB] Fetching calendar from: %s\n", millis(), externalUrl.c_str());
+
+    // Fetch from external API
+    std::string jsonResponse;
+    if (!HttpDownloader::fetchUrl(externalUrl.c_str(), jsonResponse)) {
+      Serial.printf("[%lu] [WEB] Failed to fetch calendar: %s\n", millis(), entry.id.c_str());
+      continue;
+    }
+
+    // Parse response
+    JsonDocument sourceDoc;
+    if (deserializeJson(sourceDoc, jsonResponse) != DeserializationError::Ok) {
+      Serial.printf("[%lu] [WEB] Failed to parse calendar JSON: %s\n", millis(), entry.id.c_str());
+      continue;
+    }
+
+    // Helper to add calendar_id and tag to events
+    auto enrichEvents = [&](JsonArray events) {
+      for (JsonObject event : events) {
+        event["calendar_id"] = entry.id;
+        event["tag"] = entry.tag;
+      }
+    };
+
+    // Merge past days
+    JsonArray sourcePast = sourceDoc["past"].as<JsonArray>();
+    if (!sourcePast.isNull()) {
+      for (JsonObject day : sourcePast) {
+        JsonArray events = day["events"].as<JsonArray>();
+        if (!events.isNull()) {
+          enrichEvents(events);
+          // Add to merged past array
+          JsonObject mergedDay = pastArray.add<JsonObject>();
+          mergedDay["date"] = day["date"];
+          JsonArray mergedEvents = mergedDay["events"].to<JsonArray>();
+          for (JsonObject event : events) {
+            mergedEvents.add(event);
+          }
+        }
+      }
+    }
+
+    // Merge today
+    JsonObject sourceToday = sourceDoc["today"].as<JsonObject>();
+    if (!sourceToday.isNull()) {
+      JsonArray events = sourceToday["events"].as<JsonArray>();
+      if (!events.isNull()) {
+        enrichEvents(events);
+        if (todayObj.isNull()) {
+          todayObj["date"] = sourceToday["date"];
+          todayObj["events"].to<JsonArray>();
+        }
+        JsonArray todayEvents = todayObj["events"].as<JsonArray>();
+        for (JsonObject event : events) {
+          todayEvents.add(event);
+        }
+      }
+    }
+
+    // Merge future days
+    JsonArray sourceFuture = sourceDoc["future"].as<JsonArray>();
+    if (!sourceFuture.isNull()) {
+      for (JsonObject day : sourceFuture) {
+        JsonArray events = day["events"].as<JsonArray>();
+        if (!events.isNull()) {
+          enrichEvents(events);
+          // Add to merged future array
+          JsonObject mergedDay = futureArray.add<JsonObject>();
+          mergedDay["date"] = day["date"];
+          JsonArray mergedEvents = mergedDay["events"].to<JsonArray>();
+          for (JsonObject event : events) {
+            mergedEvents.add(event);
+          }
+        }
+      }
+    }
+  }
+
+  // Send merged response
+  String json;
+  serializeJson(mergedDoc, json);
+  server->send(200, "application/json", json);
+}
 
 void CrossPointWebServer::handleFileListData() const {
   // Get current path from query string (default to root)
@@ -1301,4 +1573,93 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
     default:
       break;
   }
+}
+
+void CrossPointWebServer::handleWifiPage() const {
+  server->send(200, "text/html", WifiPageHtml);
+}
+
+void CrossPointWebServer::handleGetWifi() const {
+  JsonDocument doc;
+
+  const auto& credentials = WIFI_STORE.getCredentials();
+  JsonArray networks = doc["networks"].to<JsonArray>();
+
+  const String currentSSID = WiFi.SSID();
+  for (const auto& cred : credentials) {
+    JsonObject net = networks.add<JsonObject>();
+    net["ssid"] = cred.ssid;
+    net["connected"] = (cred.ssid == currentSSID.c_str());
+    // NOTE: Do NOT send passwords for security
+  }
+
+  doc["maxNetworks"] = 8;  // WifiCredentialStore::MAX_NETWORKS (private)
+  doc["currentCount"] = credentials.size();
+
+  String json;
+  serializeJson(doc, json);
+  server->send(200, "application/json", json);
+}
+
+void CrossPointWebServer::handlePostWifi() {
+  if (!server->hasArg("plain")) {
+    server->send(400, "text/plain", "Missing body");
+    return;
+  }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, server->arg("plain")) != DeserializationError::Ok) {
+    server->send(400, "text/plain", "Invalid JSON");
+    return;
+  }
+
+  const char* ssid = doc["ssid"];
+  const char* password = doc["password"];
+
+  if (!ssid || strlen(ssid) == 0) {
+    server->send(400, "text/plain", "SSID required");
+    return;
+  }
+
+  // Check if we're at max networks and this is a new SSID
+  if (WIFI_STORE.getCredentials().size() >= 8 &&  // WifiCredentialStore::MAX_NETWORKS (private)
+      !WIFI_STORE.findCredential(ssid)) {
+    server->send(400, "text/plain", "Maximum networks reached (8)");
+    return;
+  }
+
+  if (!WIFI_STORE.addCredential(ssid, password ? password : "")) {
+    server->send(500, "text/plain", "Failed to save network");
+    return;
+  }
+
+  Serial.printf("[%lu] [WEB] Added WiFi network: %s\n", millis(), ssid);
+  server->send(200, "text/plain", "OK");
+}
+
+void CrossPointWebServer::handleDeleteWifi() {
+  if (!server->hasArg("plain")) {
+    server->send(400, "text/plain", "Missing body");
+    return;
+  }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, server->arg("plain")) != DeserializationError::Ok) {
+    server->send(400, "text/plain", "Invalid JSON");
+    return;
+  }
+
+  const char* ssid = doc["ssid"];
+  if (!ssid || strlen(ssid) == 0) {
+    server->send(400, "text/plain", "SSID required");
+    return;
+  }
+
+  if (!WIFI_STORE.removeCredential(ssid)) {
+    server->send(404, "text/plain", "Network not found");
+    return;
+  }
+
+  Serial.printf("[%lu] [WEB] Removed WiFi network: %s\n", millis(), ssid);
+  server->send(200, "text/plain", "OK");
 }

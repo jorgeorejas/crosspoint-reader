@@ -28,6 +28,7 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent) {
   Serial.printf("[%lu] [HTTP] Fetching: %s\n", millis(), url.c_str());
 
   http.begin(*client, url.c_str());
+  http.setTimeout(30000);  // 30 second timeout for calendar API calls
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.addHeader("User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
 
@@ -40,7 +41,10 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent) {
 
   const int httpCode = http.GET();
   if (httpCode != HTTP_CODE_OK) {
-    Serial.printf("[%lu] [HTTP] Fetch failed: %d\n", millis(), httpCode);
+    Serial.printf("[%lu] [HTTP] Fetch failed with status: %d\n", millis(), httpCode);
+    if (httpCode > 0) {
+      Serial.printf("[%lu] [HTTP] Response: %s\n", millis(), http.getString().c_str());
+    }
     http.end();
     return false;
   }
@@ -62,8 +66,8 @@ bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent) {
   return true;
 }
 
-HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
-                                                             ProgressCallback progress) {
+static HttpDownloader::DownloadError downloadToFileInternal(const std::string& url, const std::string& destPath,
+                                                            HttpDownloader::ProgressCallback progress, bool useAuth) {
   // Use WiFiClientSecure for HTTPS, regular WiFiClient for HTTP
   std::unique_ptr<WiFiClient> client;
   if (UrlUtils::isHttpsUrl(url)) {
@@ -79,11 +83,12 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   Serial.printf("[%lu] [HTTP] Destination: %s\n", millis(), destPath.c_str());
 
   http.begin(*client, url.c_str());
+  http.setTimeout(30000);  // 30 second timeout for large calendar files
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.addHeader("User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
 
   // Add Basic HTTP auth if credentials are configured
-  if (strlen(SETTINGS.opdsUsername) > 0 && strlen(SETTINGS.opdsPassword) > 0) {
+  if (useAuth && strlen(SETTINGS.opdsUsername) > 0 && strlen(SETTINGS.opdsPassword) > 0) {
     std::string credentials = std::string(SETTINGS.opdsUsername) + ":" + SETTINGS.opdsPassword;
     String encoded = base64::encode(credentials.c_str());
     http.addHeader("Authorization", "Basic " + encoded);
@@ -93,7 +98,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   if (httpCode != HTTP_CODE_OK) {
     Serial.printf("[%lu] [HTTP] Download failed: %d\n", millis(), httpCode);
     http.end();
-    return HTTP_ERROR;
+    return HttpDownloader::HTTP_ERROR;
   }
 
   const size_t contentLength = http.getSize();
@@ -109,7 +114,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   if (!Storage.openFileForWrite("HTTP", destPath.c_str(), file)) {
     Serial.printf("[%lu] [HTTP] Failed to open file for writing\n", millis());
     http.end();
-    return FILE_ERROR;
+    return HttpDownloader::FILE_ERROR;
   }
 
   // Get the stream for chunked reading
@@ -119,10 +124,11 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
     file.close();
     Storage.remove(destPath.c_str());
     http.end();
-    return HTTP_ERROR;
+    return HttpDownloader::HTTP_ERROR;
   }
 
   // Download in chunks
+  constexpr size_t DOWNLOAD_CHUNK_SIZE = 1024;
   uint8_t buffer[DOWNLOAD_CHUNK_SIZE];
   size_t downloaded = 0;
   const size_t total = contentLength > 0 ? contentLength : 0;
@@ -147,7 +153,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
       file.close();
       Storage.remove(destPath.c_str());
       http.end();
-      return FILE_ERROR;
+      return HttpDownloader::FILE_ERROR;
     }
 
     downloaded += bytesRead;
@@ -166,8 +172,18 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   if (contentLength > 0 && downloaded != contentLength) {
     Serial.printf("[%lu] [HTTP] Size mismatch: got %zu, expected %zu\n", millis(), downloaded, contentLength);
     Storage.remove(destPath.c_str());
-    return HTTP_ERROR;
+    return HttpDownloader::HTTP_ERROR;
   }
 
-  return OK;
+  return HttpDownloader::OK;
+}
+
+HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
+                                                             ProgressCallback progress) {
+  return downloadToFileInternal(url, destPath, progress, true);
+}
+
+HttpDownloader::DownloadError HttpDownloader::downloadToFileNoAuth(const std::string& url, const std::string& destPath,
+                                                                   ProgressCallback progress) {
+  return downloadToFileInternal(url, destPath, progress, false);
 }

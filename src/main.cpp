@@ -18,6 +18,7 @@
 #include "activities/boot_sleep/BootActivity.h"
 #include "activities/boot_sleep/SleepActivity.h"
 #include "activities/browser/OpdsBookBrowserActivity.h"
+#include "activities/calendar/CalendarActivity.h"
 #include "activities/home/HomeActivity.h"
 #include "activities/home/MyLibraryActivity.h"
 #include "activities/home/RecentBooksActivity.h"
@@ -246,10 +247,15 @@ void onGoToBrowser() {
   enterNewActivity(new OpdsBookBrowserActivity(renderer, mappedInputManager, onGoHome));
 }
 
+void onGoToCalendar() {
+  exitActivity();
+  enterNewActivity(new CalendarActivity(renderer, mappedInputManager, onGoHome));
+}
+
 void onGoHome() {
   exitActivity();
   enterNewActivity(new HomeActivity(renderer, mappedInputManager, onGoToReader, onGoToMyLibrary, onGoToRecentBooks,
-                                    onGoToSettings, onGoToFileTransfer, onGoToBrowser));
+                                    onGoToSettings, onGoToFileTransfer, onGoToBrowser, onGoToCalendar));
 }
 
 void setupDisplayAndFonts() {

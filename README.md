@@ -36,6 +36,13 @@ This project is **not affiliated with Xteink**; it's built as a community projec
   - [x] Cover sleep screen
 - [x] Wifi book upload
 - [x] Wifi OTA updates
+- [x] Calendar (iCal `.ics`)
+  - [x] Multiple calendars with tags
+  - [x] Manual sync + auto-sync on open/hourly
+  - [x] Recurring events (RRULE, RDATE, EXDATE)
+  - [x] All-day events
+  - [x] Calendar sleep screen (next 24 hours)
+  - [x] Fixed timezone offset (no TZID/VTIMEZONE)
 - [x] Configurable font, layout, and display options
   - [ ] User provided fonts
   - [ ] Full UTF support

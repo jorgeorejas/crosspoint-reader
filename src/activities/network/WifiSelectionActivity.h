@@ -74,8 +74,8 @@ class WifiSelectionActivity final : public ActivityWithSubactivity {
   int savePromptSelection = 0;
   int forgetPromptSelection = 0;
 
-  // Connection timeout
-  static constexpr unsigned long CONNECTION_TIMEOUT_MS = 15000;
+  // Connection timeout (increased to 30s for slower networks)
+  static constexpr unsigned long CONNECTION_TIMEOUT_MS = 30000;
   unsigned long connectionStartTime = 0;
 
   static void taskTrampoline(void* param);

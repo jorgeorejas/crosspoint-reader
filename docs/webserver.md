@@ -119,6 +119,7 @@ Navigation links:
 
 - **Home** - Returns to the status page
 - **File Manager** - Access file management features
+- **Calendar** - Configure iCal calendar sources
 
 <img src="./images/wifi/webserver_homepage.png" width="600">
 
@@ -167,6 +168,18 @@ This is useful for organizing your ebooks by genre, author, or series.
 **Warning:** Deletion is permanent and cannot be undone!
 
 **Note:** Folders must be empty before they can be deleted.
+
+### Calendar
+
+Click **Calendar** to configure your iCal sources and sync events.
+
+You can:
+
+- Add multiple calendar URLs (`.ics`)
+- Assign tags for easy filtering on-device
+- Enable auto-sync on open and hourly (while awake)
+
+<img src="./images/wifi/webserver_calendar.png" width="600">
 
 ---
 
@@ -222,4 +235,5 @@ Your uploaded files will be immediately available in the file browser!
 
 - [User Guide](../USER_GUIDE.md) - General device operation
 - [Troubleshooting](./troubleshooting.md) - Troubleshooting
+- [Calendar iCal Support](./calendar.md) - Supported iCal subset
 - [README](../README.md) - Project overview and features

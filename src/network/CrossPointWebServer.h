@@ -93,6 +93,11 @@ class CrossPointWebServer {
   void handleStatus() const;
   void handleFileList() const;
   void handleFileListData() const;
+  void handleCalendarPage() const;
+  void handleCalendarGet() const;
+  void handleCalendarPost() const;
+  void handleCalendarSync() const;
+  void handleCalendarApi() const;
   void handleDownload() const;
   void handleUpload(UploadState& state) const;
   void handleUploadPost(UploadState& state) const;
@@ -105,4 +110,10 @@ class CrossPointWebServer {
   void handleSettingsPage() const;
   void handleGetSettings() const;
   void handlePostSettings();
+
+  // WiFi handlers
+  void handleWifiPage() const;
+  void handleGetWifi() const;
+  void handlePostWifi();
+  void handleDeleteWifi();
 };

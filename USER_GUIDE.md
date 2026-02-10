@@ -104,6 +104,7 @@ The Settings screen allows you to configure the device's behavior. There are a f
   - "Light" - The same default sleep screen, on a white background
   - "Custom" - Custom images from the SD card; see [Sleep Screen](#36-sleep-screen) below for more information
   - "Cover" - The book cover image (Note: this is experimental and may not work as expected)
+  - "Calendar" - A list of the next 24 hours of events from your cached calendar
   - "None" - A blank screen
   - "Cover + Custom" - The book cover image, fallbacks to "Custom" behavior
 - **Sleep Screen Cover Mode**: How to display the book cover when "Cover" sleep screen is selected:
@@ -159,6 +160,7 @@ The Settings screen allows you to configure the device's behavior. There are a f
   - "OFF" (default) - Disable the fix
   - "ON" - Enable the fix
 - **OPDS Browser**: Configure OPDS server settings for browsing and downloading books. Set the server URL (for Calibre Content Server, add `/opds` to the end), and optionally configure username and password for servers requiring authentication. Note: Only HTTP Basic authentication is supported. If using Calibre Content Server with authentication enabled, you must set it to use Basic authentication instead of the default Digest authentication.
+- **Calendar**: Configure iCal (`.ics`) URLs and tags from the web interface. The Calendar app shows upcoming events and can sync over WiFi.
 - **Check for updates**: Check for firmware updates over WiFi.
 
 ### 3.6 Sleep Screen
